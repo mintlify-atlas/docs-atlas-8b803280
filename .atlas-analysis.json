@@ -1,0 +1,191 @@
+{
+  "projectType": "framework",
+  "projectName": "MCRIT",
+  "projectDescription": "MinHash-based Code Relationship & Investigation Toolkit for code similarity analysis in reverse engineering",
+  "theme": "aspen",
+  "primaryColor": "#3B82F6",
+  "lightColor": "#60A5FA",
+  "darkColor": "#2563EB",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "introduction",
+              "architecture",
+              "features"
+            ]
+          },
+          {
+            "group": "Getting Started",
+            "pages": [
+              "getting-started/installation",
+              "getting-started/docker-setup",
+              "getting-started/quickstart",
+              "getting-started/configuration"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/minhash",
+              "concepts/shinglers",
+              "concepts/pichash",
+              "concepts/matching",
+              "concepts/storage"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/server-worker",
+              "guides/submitting-samples",
+              "guides/querying-matches",
+              "guides/managing-families",
+              "guides/unique-blocks",
+              "guides/reference-data"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/ida-plugin",
+              "integrations/python-client",
+              "integrations/cli"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "REST API",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Status & System",
+            "pages": [
+              "api/status",
+              "api/config",
+              "api/export-import"
+            ]
+          },
+          {
+            "group": "Samples",
+            "pages": [
+              "api/samples/list",
+              "api/samples/submit",
+              "api/samples/retrieve",
+              "api/samples/update",
+              "api/samples/delete"
+            ]
+          },
+          {
+            "group": "Families",
+            "pages": [
+              "api/families/list",
+              "api/families/retrieve",
+              "api/families/update",
+              "api/families/delete"
+            ]
+          },
+          {
+            "group": "Functions",
+            "pages": [
+              "api/functions/list",
+              "api/functions/retrieve",
+              "api/functions/labels"
+            ]
+          },
+          {
+            "group": "Matching",
+            "pages": [
+              "api/matching/sample",
+              "api/matching/cross",
+              "api/matching/function"
+            ]
+          },
+          {
+            "group": "Queries",
+            "pages": [
+              "api/queries/binary",
+              "api/queries/function",
+              "api/queries/pichash",
+              "api/queries/picblockhash"
+            ]
+          },
+          {
+            "group": "Jobs & Queue",
+            "pages": [
+              "api/jobs/list",
+              "api/jobs/retrieve",
+              "api/jobs/results"
+            ]
+          },
+          {
+            "group": "Blocks",
+            "pages": [
+              "api/blocks/unique-blocks"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": "Extension",
+            "pages": [
+              "development/custom-shinglers",
+              "development/storage-backends"
+            ]
+          },
+          {
+            "group": "Resources",
+            "pages": [
+              "development/architecture-details",
+              "development/migration-guides",
+              "development/contributing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "MinHash-based code similarity detection for disassembled binaries",
+    "REST API server with asynchronous job queue processing",
+    "PicHash and PicBlockHash for position-independent code matching",
+    "Extensible shingler system for customizable function encoding",
+    "IDA Pro plugin for interactive reverse engineering workflow",
+    "Python client library for programmatic access",
+    "CLI tool for batch processing and automation",
+    "MongoDB-backed persistent storage with configurable backends",
+    "Cross-matching and family-based sample organization",
+    "Unique block identification for signature generation"
+  ],
+  "publicApiSurface": [
+    "mcrit server - Start REST API server",
+    "mcrit worker - Start job processing worker",
+    "mcrit spawningworker - Start worker with subprocess isolation",
+    "mcrit client - Launch interactive CLI client",
+    "McritClient - Python client class for API access",
+    "POST /samples/binary - Submit binary sample",
+    "GET /matches/sample/{sample_id} - Get sample matches",
+    "POST /query/binary - Query binary for matches",
+    "GET /families - List malware families",
+    "GET /jobs - List processing jobs",
+    "GET /status - Get system status",
+    "POST /query/pichash/{pichash} - Query by PicHash",
+    "GET /uniqueblocks/samples/{sample_ids} - Get unique blocks",
+    "POST /export - Export samples",
+    "POST /import - Import samples"
+  ]
+}
