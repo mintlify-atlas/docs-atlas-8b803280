@@ -1,0 +1,308 @@
+---
+title: 'Job Results'
+description: 'Retrieve results from completed jobs'
+---
+
+## GET /jobs/{job_id}/result
+
+Retrieve the result data for a completed job by its job ID.
+
+### Path Parameters
+
+<ParamField path="job_id" type="string" required>
+  Job ID - must be a 24-character hexadecimal string
+</ParamField>
+
+### Query Parameters
+
+<ParamField query="compact" type="boolean" default="false">
+  For matching and query jobs, exclude the detailed function matches to reduce response size. Set to `true` to enable compact mode.
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request. Returns `"successful"` on success.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Result data - structure varies by job type. See examples below for common result types.
+</ResponseField>
+
+### Result Types
+
+<Expandable title="Matching Job Results">
+  Results from `getMatchesForSample`, `getMatchesForSampleVs`, or `combineMatchesToCross` methods.
+  
+  <ResponseField name="info" type="object">
+    Job and sample metadata
+    
+    <Expandable title="Info Properties">
+      <ResponseField name="job" type="object">
+        Job execution details including duration, parameters, and timestamp
+      </ResponseField>
+      
+      <ResponseField name="sample" type="object">
+        Source sample information including SHA256, family, architecture, statistics
+      </ResponseField>
+    </Expandable>
+  </ResponseField>
+  
+  <ResponseField name="matches" type="object">
+    Matching results and aggregations
+    
+    <Expandable title="Matches Properties">
+      <ResponseField name="aggregation" type="object">
+        Aggregated statistics by matching method (minhash and pichash)
+        
+        <Expandable title="Aggregation Details">
+          <ResponseField name="minhash" type="object">
+            MinHash matching statistics including bytes_matched, num_foreign_functions_matched, num_own_functions_matched
+          </ResponseField>
+          
+          <ResponseField name="pichash" type="object">
+            PicHash matching statistics including bytes_matched, num_foreign_functions_matched, num_own_functions_matched
+          </ResponseField>
+        </Expandable>
+      </ResponseField>
+      
+      <ResponseField name="functions" type="array">
+        Array of function-level matches (excluded when `compact=true`)
+        
+        <Expandable title="Function Match Object">
+          <ResponseField name="fid" type="integer">
+            Function ID
+          </ResponseField>
+          
+          <ResponseField name="offset" type="integer">
+            Function offset in the binary
+          </ResponseField>
+          
+          <ResponseField name="num_bytes" type="number">
+            Size of the function in bytes
+          </ResponseField>
+          
+          <ResponseField name="matches" type="array">
+            Array of matches: [sample_id, family_id, function_id, score, match_type]
+          </ResponseField>
+        </Expandable>
+      </ResponseField>
+    </Expandable>
+  </ResponseField>
+</Expandable>
+
+<Expandable title="Unique Blocks Job Results">
+  Results from `getUniqueBlocks` method.
+  
+  <ResponseField name="statistics" type="object">
+    Statistics about the unique blocks analysis
+    
+    <Expandable title="Statistics Properties">
+      <ResponseField name="num_samples" type="integer">
+        Number of samples analyzed
+      </ResponseField>
+      
+      <ResponseField name="by_sample_id" type="object">
+        Statistics broken down by sample ID
+      </ResponseField>
+    </Expandable>
+  </ResponseField>
+  
+  <ResponseField name="unique_blocks" type="object">
+    Dictionary of unique blocks keyed by PIC block hash
+    
+    <Expandable title="Block Properties">
+      <ResponseField name="length" type="integer">
+        Number of instructions in the block
+      </ResponseField>
+      
+      <ResponseField name="escaped_sequence" type="string">
+        Hex byte sequence for the block
+      </ResponseField>
+      
+      <ResponseField name="instructions" type="array">
+        Array of disassembled instructions
+      </ResponseField>
+      
+      <ResponseField name="samples" type="array">
+        Array of sample IDs containing this block
+      </ResponseField>
+      
+      <ResponseField name="score" type="number">
+        Uniqueness score for the block
+      </ResponseField>
+    </Expandable>
+  </ResponseField>
+  
+  <ResponseField name="yara_rule" type="array">
+    Generated YARA rule based on unique blocks (if applicable)
+  </ResponseField>
+</Expandable>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-mcrit-instance.com/jobs/507f1f77bcf86cd799439011/result" \
+  -H "apitoken: your-api-token"
+```
+
+### Example Request (Compact Mode)
+
+```bash
+curl -X GET "https://your-mcrit-instance.com/jobs/507f1f77bcf86cd799439011/result?compact=true" \
+  -H "apitoken: your-api-token"
+```
+
+### Example Response (Matching Job)
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "info": {
+      "job": {
+        "duration": 1.333042,
+        "parameters": "getMatchesForSample(1)",
+        "timestamp": "2023-01-12T11:01:17.468680"
+      },
+      "sample": {
+        "sample_id": 1,
+        "sha256": "97bf981931c9d52abff35eef3ede355e51c61014fad6c9f2698f15d24c14335a",
+        "family": "win.zeus",
+        "family_id": 2,
+        "filename": "97bf981931c9d52abff35eef3ede355e51c61014fad6c9f2698f15d24c14335a",
+        "architecture": "intel",
+        "bitness": 32,
+        "binary_size": 157696,
+        "statistics": {
+          "num_functions": 636,
+          "num_instructions": 36169,
+          "num_basic_blocks": 7297
+        }
+      }
+    },
+    "matches": {
+      "aggregation": {
+        "minhash": {
+          "bytes_matched": 94097.0,
+          "num_foreign_functions_matched": 650,
+          "num_own_functions_matched": 515,
+          "num_self_matches": 115
+        },
+        "pichash": {
+          "bytes_matched": 45724.0,
+          "num_foreign_functions_matched": 420,
+          "num_own_functions_matched": 345,
+          "num_self_matches": 30
+        }
+      },
+      "functions": [
+        {
+          "fid": 670,
+          "offset": 4213710,
+          "num_bytes": 154.0,
+          "matches": [
+            [1, 0, 200, 90.625, 5],
+            [3, 2, 1672, 100.0, 7]
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+## GET /results/{result_id}
+
+Retrieve result data directly by its result ID (GridFS ID).
+
+### Path Parameters
+
+<ParamField path="result_id" type="string" required>
+  Result ID - must be a 24-character hexadecimal string (GridFS ID)
+</ParamField>
+
+### Query Parameters
+
+<ParamField query="compact" type="boolean" default="false">
+  For matching and query jobs, exclude detailed function matches. Set to `true` to enable compact mode.
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request. Returns `"successful"` on success or `"failed"` on error.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Result data - structure identical to job result endpoint above
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-mcrit-instance.com/results/607f1f77bcf86cd799439099" \
+  -H "apitoken: your-api-token"
+```
+
+### Example Response (Invalid Result ID)
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "Valid ResultIDs are hexstrings with 24 characters."
+  }
+}
+```
+
+## GET /results/{result_id}/job
+
+Retrieve the job information associated with a result ID.
+
+### Path Parameters
+
+<ParamField path="result_id" type="string" required>
+  Result ID - must be a 24-character hexadecimal string (GridFS ID)
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request. Returns `"successful"` on success or `"failed"` on error.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Job object - see the [Retrieve Job](/api/jobs/retrieve) documentation for complete job object structure
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-mcrit-instance.com/results/607f1f77bcf86cd799439099/job" \
+  -H "apitoken: your-api-token"
+```
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "_id": "507f1f77bcf86cd799439011",
+    "number": 42,
+    "payload": {
+      "method": "getMatchesForSample",
+      "params": "{\"0\": 1}",
+      "descriptor": "sample_1_matching"
+    },
+    "priority": 0,
+    "attempts_left": 1,
+    "created_at": "2023-01-12T10:00:00.000000",
+    "started_at": "2023-01-12T10:00:01.000000",
+    "finished_at": "2023-01-12T10:01:17.468680",
+    "progress": 1,
+    "result": "607f1f77bcf86cd799439099"
+  }
+}
+```

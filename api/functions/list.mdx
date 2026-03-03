@@ -1,0 +1,238 @@
+---
+title: List Functions
+description: Retrieve a paginated list of all functions in the MCRIT database
+---
+
+## GET /functions
+
+Retrieves a paginated list of all functions stored in the MCRIT database. Returns function metadata including minhash signatures, architecture details, and associated labels.
+
+### Query Parameters
+
+<ParamField query="start" type="integer" default="0">
+  Starting index for pagination. Use to skip to a specific position in the function list.
+</ParamField>
+
+<ParamField query="limit" type="integer" default="0">
+  Maximum number of functions to return. A value of 0 returns all functions from the start index.
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string" required>
+  Status of the request. Returns `"successful"` on success.
+</ResponseField>
+
+<ResponseField name="data" type="object" required>
+  Dictionary mapping function IDs to function objects.
+  
+  <Expandable title="Function Object">
+    <ResponseField name="function_id" type="integer" required>
+      Unique identifier for the function
+    </ResponseField>
+    
+    <ResponseField name="family_id" type="integer" required>
+      ID of the malware family this function belongs to
+    </ResponseField>
+    
+    <ResponseField name="sample_id" type="integer" required>
+      ID of the binary sample containing this function
+    </ResponseField>
+    
+    <ResponseField name="function_name" type="string" required>
+      Name of the function (if available from analysis)
+    </ResponseField>
+    
+    <ResponseField name="architecture" type="string" required>
+      CPU architecture (e.g., "intel", "arm")
+    </ResponseField>
+    
+    <ResponseField name="offset" type="integer" required>
+      Memory offset of the function in the binary (two's complement encoded)
+    </ResponseField>
+    
+    <ResponseField name="num_blocks" type="integer" required>
+      Number of basic blocks in the function
+    </ResponseField>
+    
+    <ResponseField name="num_instructions" type="integer" required>
+      Total number of assembly instructions
+    </ResponseField>
+    
+    <ResponseField name="binweight" type="number" required>
+      Binary weight metric for the function
+    </ResponseField>
+    
+    <ResponseField name="pichash" type="integer" required>
+      Position-independent code hash
+    </ResponseField>
+    
+    <ResponseField name="picblockhashes" type="array" required>
+      Array of position-independent block hashes
+    </ResponseField>
+    
+    <ResponseField name="minhash" type="string" required>
+      MinHash signature as hexadecimal string
+    </ResponseField>
+    
+    <ResponseField name="minhash_shingle_composition" type="object" required>
+      Composition data for the MinHash shingling process
+    </ResponseField>
+    
+    <ResponseField name="function_labels" type="array" required>
+      Array of user-assigned labels for this function
+      
+      <Expandable title="FunctionLabelEntry">
+        <ResponseField name="function_label" type="string" required>
+          The label text assigned to the function
+        </ResponseField>
+        
+        <ResponseField name="username" type="string" required>
+          Username of the person who created the label
+        </ResponseField>
+        
+        <ResponseField name="timestamp" type="string" required>
+          ISO 8601 timestamp when the label was created (format: YYYY-MM-DDTHH:MM:SS)
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="matches" type="object" required>
+      Dictionary of match information for this function
+    </ResponseField>
+    
+    <ResponseField name="xcfg" type="object">
+      Extended control flow graph representation (only included if requested)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.example.com/functions?start=0&limit=10" \
+  -H "apitoken: your-api-token"
+```
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "12345": {
+      "function_id": 12345,
+      "family_id": 42,
+      "sample_id": 789,
+      "function_name": "sub_401000",
+      "architecture": "intel",
+      "offset": 4198400,
+      "num_blocks": 15,
+      "num_instructions": 87,
+      "binweight": 0.234,
+      "pichash": 1234567890,
+      "picblockhashes": [987654321, 876543210],
+      "minhash": "a1b2c3d4e5f6...",
+      "minhash_shingle_composition": {},
+      "function_labels": [
+        {
+          "function_label": "decryption_routine",
+          "username": "analyst1",
+          "timestamp": "2026-03-01T14:30:00"
+        }
+      ],
+      "matches": {},
+      "xcfg": null
+    }
+  }
+}
+```
+
+## POST /functions
+
+Retrieves multiple specific functions by their IDs. Accepts a comma-separated list of function IDs in the request body.
+
+### Query Parameters
+
+<ParamField query="with_label_only" type="boolean" default="false">
+  When set to `true`, only returns functions that have at least one label assigned.
+</ParamField>
+
+### Request Body
+
+Comma-separated list of function IDs (as plain text).
+
+**Example:** `12345,12346,12347`
+
+### Response
+
+Same structure as GET /functions, returning a dictionary mapping function IDs to function objects. Functions without labels are excluded when `with_label_only=true`.
+
+<ResponseField name="status" type="string" required>
+  Status of the request. Returns `"successful"` on success or `"failed"` on error.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Dictionary mapping function IDs to function objects (same structure as GET endpoint)
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X POST "https://api.example.com/functions?with_label_only=true" \
+  -H "apitoken: your-api-token" \
+  -H "Content-Type: text/plain" \
+  -d "12345,12346,12347"
+```
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "12345": {
+      "function_id": 12345,
+      "family_id": 42,
+      "sample_id": 789,
+      "function_name": "sub_401000",
+      "function_labels": [
+        {
+          "function_label": "crypto",
+          "username": "researcher",
+          "timestamp": "2026-02-15T10:20:30"
+        }
+      ]
+    }
+  }
+}
+```
+
+### Error Responses
+
+<ResponseField name="status" type="string">
+  Returns `"failed"` when an error occurs
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <Expandable title="Error Details">
+    <ResponseField name="message" type="string">
+      Human-readable error message
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### 400 Bad Request
+
+Returned when:
+- No request body is provided
+- Request body format is invalid (must be comma-separated integers)
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "POST request without body can't be processed."
+  }
+}
+```

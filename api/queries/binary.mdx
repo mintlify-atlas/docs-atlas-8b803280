@@ -1,0 +1,372 @@
+---
+title: "Query Binary"
+description: "Match binary files against the database without storing them"
+---
+
+## Query Unmapped Binary
+
+Analyzes a binary file and finds matches in the database without storing it. The binary is automatically disassembled and analyzed.
+
+### Request
+
+<ParamField query="minhash_score" type="integer" default="50">
+  Minimum MinHash similarity score threshold (0-100)
+</ParamField>
+
+<ParamField query="band_matches_required" type="integer" default="0">
+  Minimum number of band matches required
+</ParamField>
+
+<ParamField query="pichash_size" type="integer" default="8">
+  Size of PicHash for matching (must be >= 0)
+</ParamField>
+
+<ParamField query="force_recalculation" type="boolean" default="false">
+  Force recalculation of matches instead of using cached results
+</ParamField>
+
+<ParamField query="sample_group_only" type="boolean" default="false">
+  Only match against samples in the same group
+</ParamField>
+
+```bash
+curl -X POST "https://your-server.com/query/binary?minhash_score=70&band_matches_required=2" \
+  -H "apitoken: YOUR_API_TOKEN" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @/path/to/binary.exe
+```
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request (`successful` or `failed`)
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Query results containing matches for the binary
+  
+  <Expandable title="data properties">
+    <ResponseField name="info" type="object">
+      Information about the queried binary
+      
+      <Expandable title="info.sample properties">
+        <ResponseField name="sample_id" type="integer">
+          Temporary negative ID for the query (not stored in database)
+        </ResponseField>
+        <ResponseField name="family" type="string">
+          Family name (empty for queries)
+        </ResponseField>
+        <ResponseField name="sha256" type="string">
+          SHA256 hash of the binary
+        </ResponseField>
+        <ResponseField name="filename" type="string">
+          Filename (derived from upload or empty)
+        </ResponseField>
+        <ResponseField name="num_bytes" type="integer">
+          Size of the binary in bytes
+        </ResponseField>
+        <ResponseField name="num_functions" type="integer">
+          Number of functions identified in the binary
+        </ResponseField>
+        <ResponseField name="architecture" type="string">
+          Detected architecture (e.g., "intel", "arm")
+        </ResponseField>
+        <ResponseField name="bitness" type="integer">
+          Bitness of the binary (32 or 64)
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="matches" type="object">
+      Matching information
+      
+      <Expandable title="matches properties">
+        <ResponseField name="aggregation" type="object">
+          Aggregated matching statistics across all matches
+        </ResponseField>
+        
+        <ResponseField name="samples" type="array">
+          Array of matched samples from the database
+          
+          <Expandable title="sample match properties">
+            <ResponseField name="sample_id" type="integer">
+              ID of the matched sample
+            </ResponseField>
+            <ResponseField name="family" type="string">
+              Family name of the matched sample
+            </ResponseField>
+            <ResponseField name="family_id" type="integer">
+              ID of the matched sample's family
+            </ResponseField>
+            <ResponseField name="version" type="string">
+              Version of the matched sample
+            </ResponseField>
+            <ResponseField name="sha256" type="string">
+              SHA256 hash of the matched sample
+            </ResponseField>
+            <ResponseField name="filename" type="string">
+              Filename of the matched sample
+            </ResponseField>
+            <ResponseField name="num_bytes" type="integer">
+              Size of the matched sample in bytes
+            </ResponseField>
+            <ResponseField name="num_functions" type="integer">
+              Number of functions in the matched sample
+            </ResponseField>
+            <ResponseField name="matched" type="object">
+              Matching metrics
+              
+              <Expandable title="matched properties">
+                <ResponseField name="functions" type="object">
+                  Function-level matching counts
+                  
+                  <Expandable title="functions properties">
+                    <ResponseField name="minhashes" type="integer">
+                      Number of functions matched via MinHash
+                    </ResponseField>
+                    <ResponseField name="pichashes" type="integer">
+                      Number of functions matched via PicHash
+                    </ResponseField>
+                    <ResponseField name="combined" type="integer">
+                      Total number of matched functions
+                    </ResponseField>
+                    <ResponseField name="library" type="integer">
+                      Number of library functions matched
+                    </ResponseField>
+                  </Expandable>
+                </ResponseField>
+                
+                <ResponseField name="bytes" type="object">
+                  Byte-level matching metrics
+                  
+                  <Expandable title="bytes properties">
+                    <ResponseField name="unweighted" type="float">
+                      Total matched bytes (unweighted)
+                    </ResponseField>
+                    <ResponseField name="score_weighted" type="float">
+                      Matched bytes weighted by similarity score
+                    </ResponseField>
+                    <ResponseField name="frequency_weighted" type="float">
+                      Matched bytes weighted by frequency
+                    </ResponseField>
+                    <ResponseField name="nonlib_unweighted" type="float">
+                      Matched bytes excluding libraries (unweighted)
+                    </ResponseField>
+                    <ResponseField name="nonlib_score_weighted" type="float">
+                      Matched bytes excluding libraries (score weighted)
+                    </ResponseField>
+                    <ResponseField name="nonlib_frequency_weighted" type="float">
+                      Matched bytes excluding libraries (frequency weighted)
+                    </ResponseField>
+                  </Expandable>
+                </ResponseField>
+                
+                <ResponseField name="percent" type="object">
+                  Percentage-based matching metrics
+                  
+                  <Expandable title="percent properties">
+                    <ResponseField name="unweighted" type="float">
+                      Percentage of matched bytes (unweighted)
+                    </ResponseField>
+                    <ResponseField name="score_weighted" type="float">
+                      Percentage of matched bytes (score weighted)
+                    </ResponseField>
+                    <ResponseField name="frequency_weighted" type="float">
+                      Percentage of matched bytes (frequency weighted)
+                    </ResponseField>
+                    <ResponseField name="nonlib_unweighted" type="float">
+                      Percentage of matched bytes excluding libraries (unweighted)
+                    </ResponseField>
+                    <ResponseField name="nonlib_score_weighted" type="float">
+                      Percentage of matched bytes excluding libraries (score weighted)
+                    </ResponseField>
+                    <ResponseField name="nonlib_frequency_weighted" type="float">
+                      Percentage of matched bytes excluding libraries (frequency weighted)
+                    </ResponseField>
+                  </Expandable>
+                </ResponseField>
+              </Expandable>
+            </ResponseField>
+          </Expandable>
+        </ResponseField>
+        
+        <ResponseField name="functions" type="object">
+          Function-level match details keyed by function_id (negative IDs for query functions)
+          
+          <Expandable title="function properties">
+            <ResponseField name="fid" type="integer">
+              Function ID (negative for query functions)
+            </ResponseField>
+            <ResponseField name="num_bytes" type="integer">
+              Size of the function in bytes
+            </ResponseField>
+            <ResponseField name="offset" type="integer">
+              Offset of the function in the binary
+            </ResponseField>
+            <ResponseField name="matches" type="array">
+              Array of match tuples: [family_id, sample_id, function_id, score, flags]
+              
+              <Expandable title="match tuple">
+                <ResponseField name="[0]" type="integer">
+                  Matched family ID
+                </ResponseField>
+                <ResponseField name="[1]" type="integer">
+                  Matched sample ID
+                </ResponseField>
+                <ResponseField name="[2]" type="integer">
+                  Matched function ID
+                </ResponseField>
+                <ResponseField name="[3]" type="float">
+                  Match score (0-100)
+                </ResponseField>
+                <ResponseField name="[4]" type="integer">
+                  Match flags (bitfield: 1=MinHash, 2=PicHash, 4=Library)
+                </ResponseField>
+              </Expandable>
+            </ResponseField>
+          </Expandable>
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "info": {
+      "sample": {
+        "sample_id": -1,
+        "family": "",
+        "sha256": "abc123def456...",
+        "filename": "unknown.bin",
+        "num_bytes": 52480,
+        "num_functions": 145,
+        "architecture": "intel",
+        "bitness": 64
+      }
+    },
+    "matches": {
+      "aggregation": {},
+      "samples": [
+        {
+          "sample_id": 789,
+          "family": "malware_family_x",
+          "family_id": 15,
+          "version": "2.1",
+          "sha256": "def789abc012...",
+          "filename": "sample.dll",
+          "num_bytes": 48000,
+          "num_functions": 132,
+          "matched": {
+            "functions": {
+              "minhashes": 95,
+              "pichashes": 12,
+              "combined": 107,
+              "library": 35
+            },
+            "bytes": {
+              "unweighted": 38200.0,
+              "score_weighted": 35600.5,
+              "frequency_weighted": 33100.2,
+              "nonlib_unweighted": 28400.0,
+              "nonlib_score_weighted": 26100.3,
+              "nonlib_frequency_weighted": 24200.1
+            },
+            "percent": {
+              "unweighted": 79.6,
+              "score_weighted": 74.2,
+              "frequency_weighted": 69.0,
+              "nonlib_unweighted": 59.2,
+              "nonlib_score_weighted": 54.4,
+              "nonlib_frequency_weighted": 50.4
+            }
+          }
+        }
+      ],
+      "functions": {
+        "-1": {
+          "fid": -1,
+          "num_bytes": 256,
+          "offset": 4096,
+          "matches": [
+            [15, 789, 1023, 92.5, 1],
+            [16, 790, 1024, 85.3, 3]
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "POST request without body can't be processed."
+  }
+}
+```
+
+Returns HTTP 400 if the request has no body or the binary cannot be processed.
+
+## Query Mapped Binary
+
+Analyzes a binary file with a specific base address. Useful for memory dumps or shellcode analysis.
+
+<ParamField path="base_address" type="string" required>
+  Base address for the binary (hexadecimal string, e.g., "0x400000" or "400000"). Use "0" to auto-detect.
+</ParamField>
+
+<ParamField query="minhash_score" type="integer" default="50">
+  Minimum MinHash similarity score threshold (0-100)
+</ParamField>
+
+<ParamField query="band_matches_required" type="integer" default="0">
+  Minimum number of band matches required
+</ParamField>
+
+<ParamField query="pichash_size" type="integer" default="8">
+  Size of PicHash for matching (must be >= 0)
+</ParamField>
+
+<ParamField query="force_recalculation" type="boolean" default="false">
+  Force recalculation of matches instead of using cached results
+</ParamField>
+
+### Request
+
+```bash
+curl -X POST "https://your-server.com/query/binary/mapped/0x400000?minhash_score=70" \
+  -H "apitoken: YOUR_API_TOKEN" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @/path/to/memory_dump.bin
+```
+
+### Auto-detect Base Address
+
+To automatically detect the base address, use "0":
+
+```bash
+curl -X POST "https://your-server.com/query/binary/mapped/0" \
+  -H "apitoken: YOUR_API_TOKEN" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @/path/to/binary.bin
+```
+
+### Response
+
+The response structure is identical to the unmapped binary query endpoint.
+
+### Use Cases
+
+- Analyzing memory dumps with known load addresses
+- Matching position-independent code (PIC) or shellcode
+- Analyzing binaries extracted from memory at runtime
+- Processing firmware images with specific memory layouts

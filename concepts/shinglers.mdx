@@ -1,0 +1,311 @@
+---
+title: Shinglers
+description: Feature extraction plugins that convert disassembled functions into hashable sequences for MinHash computation
+---
+
+Shinglers are specialized plugins that extract characteristic features from disassembled functions. These features ("shingles") become the input to MinHash computation, enabling similarity-based matching.
+
+## Overview
+
+A shingler transforms a disassembled function into a set of byte sequences that capture specific properties of the code. MCRIT supports multiple shingler types that focus on different aspects:
+
+- **Structural features**: CFG statistics, block sizes, instruction counts
+- **Semantic features**: Escaped instruction sequences, mnemonic patterns
+- **Fuzzy features**: Bucketed values that tolerate small variations
+
+By combining multiple shinglers, MCRIT achieves robust matching that works across compiler optimizations, obfuscation, and minor code changes.
+
+## Shingler Architecture
+
+All shinglers inherit from `AbstractShingler` and implement a standard interface:
+
+```python
+class AbstractShingler:
+    def __init__(self, plugin_name):
+        self._name = plugin_name
+        self._config = {}
+        self._weight = 0
+        self._use_weights = True
+
+    @abstractmethod
+    def _generateByteSequences(self, function_object):
+        """Actual logic - output is a LIST of strings that can be hashed"""
+        raise NotImplementedError
+
+    def process(self, function_object, hash_seed):
+        """Generic processor that hashes byte sequences"""
+        shingled_sequences = []
+        byte_sequences = self._generateByteSequences(function_object)
+        if not byte_sequences:
+            return [[MinHash.getHashMax()]]
+        shingled_reference = [self.hashShingle(seq, hash_seed) for seq in byte_sequences]
+        shingled_sequences.append(shingled_reference)
+        # Apply weights by XORing with additional values
+        if self._use_weights:
+            for index in range(1, self._weight, 1):
+                xored_sequence = [shingle ^ self._config.SHINGLERS_XOR_VALUES[index] 
+                                  for shingle in shingled_reference]
+                shingled_sequences.append(xored_sequence)
+        return shingled_sequences
+```
+
+Source: `mcrit/shinglers/AbstractShingler.py:11-53`
+
+## Built-in Shinglers
+
+### FuzzyStatPairShingler
+
+**Purpose**: Captures structural and statistical properties of functions with fuzzy matching tolerance.
+
+**Weight**: 1 (default configuration)
+
+**Features Extracted**:
+- Number of call instructions (`num_ins_C`)
+- Number of stack instructions (`num_ins_S`)
+- Relative percentage of move instructions (`num_ins_M_rel`)
+- Relative percentage of arithmetic instructions (`num_ins_A_rel`)
+- Number of call sites (`num_calls`)
+- Stack frame size (`stack_size`)
+- Maximum basic block size (`max_block_size`)
+
+**Key Innovation**: Uses logarithmic bucketing to create fuzzy matching:
+
+```python
+def _create_bucketed_values(self, value, field_name):
+    bucketed = []
+    if self._config.SHINGLER_LOGBUCKET_CENTERED:
+        bucket_range = self._log_buckets.getLogBucketRange(value)
+        for index, bucket in enumerate(bucket_range):
+            distance = abs(index - self._config.SHINGLER_LOGBUCKET_RANGE)
+            for _ in range(distance, self._config.SHINGLER_LOGBUCKET_RANGE + 1, 1):
+                bucketed.append("{}={}:{}".format(field_name, count, bucket))
+    return bucketed
+```
+
+Source: `mcrit/shinglers/FuzzyStatPairShingler.py:46-61`
+
+For example, a function with 42 instructions might generate buckets for values [32, 42, 64], allowing matches with functions having 35-50 instructions.
+
+### EscapedBlockShingler
+
+**Purpose**: Captures instruction sequences within basic blocks using semantic abstraction.
+
+**Weight**: 3 (default configuration - higher weight means more influence)
+
+**Process**:
+1. Escape each instruction using SMDA's `IntelInstructionEscaper`
+2. Create n-grams (default size: 3) from escaped sequences
+3. Sort n-grams alphabetically (order-independent matching)
+4. Label n-grams with occurrence count
+
+```python
+def _escapeInstruction(self, instruction):
+    return (
+        instruction.getMnemonicGroup(IntelInstructionEscaper)
+        + " "
+        + instruction.getEscapedOperands(IntelInstructionEscaper)
+    )
+
+def _maskInstructions(self, instructions, ngram_size=3):
+    sequences = []
+    escaped_sequence = [self._escapeInstruction(ins) for ins in instructions]
+    if len(instructions) > ngram_size:
+        for index in range(len(escaped_sequence) - ngram_size + 1):
+            escaped_ngram = escaped_sequence[index : index + ngram_size]
+            sequences.append(";".join(sorted(escaped_ngram)))
+    else:
+        sequences.append(";".join(sorted(escaped_sequence)))
+    return sequences
+```
+
+Source: `mcrit/shinglers/EscapedBlockShingler.py:17-34`
+
+**Example**: The sequence:
+```
+push rbp
+mov rbp, rsp
+sub rsp, 0x20
+```
+
+Becomes escaped as:
+```
+S reg_64;M reg_64, reg_64;A reg_64, imm
+```
+
+This abstraction enables matching across different register allocations and immediate values.
+
+## Shingler Configuration
+
+Shinglers are configured through `ShinglerConfig`:
+
+```python
+@dataclass
+class ShinglerConfig(ConfigInterface):
+    # Directory containing *Shingler.py files
+    SHINGLER_DIR: str = "path/to/shinglers"
+    
+    # Weighting strategy
+    SHINGLER_WEIGHT_STRATEGY = ShingleLoader.WEIGHT_STRATEGY_SHINGLER_WEIGHTS
+    
+    # Log bucket configuration for fuzzy matching
+    SHINGLER_LOGBUCKETS: int = 100000
+    SHINGLER_LOGBUCKET_RANGE: int = 1
+    SHINGLER_LOGBUCKET_CENTERED: bool = True
+    
+    # Weight assignment per shingler
+    SHINGLERS_WEIGHTS = {
+        "FuzzyStatPairShingler": 1,
+        "EscapedBlockShingler": 3
+    }
+    
+    # Random seed for XOR values
+    SHINGLERS_SEED: int = 0xDEADBEEF
+```
+
+Source: `mcrit/config/ShinglerConfig.py:12-34`
+
+### Shingler Weights
+
+Weights determine how much of the MinHash signature each shingler influences:
+
+- **Weight 1**: Shingler contributes to ~25% of signature positions
+- **Weight 3**: Shingler contributes to ~75% of signature positions
+
+With the default configuration, `EscapedBlockShingler` has 3× more influence than `FuzzyStatPairShingler`, emphasizing instruction-level similarity over structural statistics.
+
+<Note>
+When using the SEGMENTED MinHash strategy, the signature is divided into weighted segments. Each shingler gets a proportional number of dedicated positions based on its weight.
+</Note>
+
+## Logarithmic Bucketing
+
+The bucketing mechanism is crucial for fuzzy matching:
+
+```python
+def _getLogBucketRange(self, value):
+    log_value = math.log(value, 2) if value > 0 else 0
+    floored_exponent = math.floor(log_value)
+    if floored_exponent < 2:
+        return (max(value - 1, 0), value, value + 1)
+    window_size = 2 ** math.floor(floored_exponent / 2)
+    middle_bucket = window_size * math.ceil(value / window_size)
+    if log_value % 2 == 0:
+        return (middle_bucket - int(window_size / 2), middle_bucket, 
+                middle_bucket + window_size)
+    else:
+        return (middle_bucket - window_size, middle_bucket, 
+                middle_bucket + window_size)
+```
+
+Source: `mcrit/shinglers/AbstractShingler.py:28-39`
+
+This creates logarithmically-spaced buckets that tolerate proportionally larger differences for larger values:
+- Small values (< 4): ±1 tolerance
+- Medium values (10-100): ±10-20% tolerance  
+- Large values (1000+): ±20-30% tolerance
+
+## Hashing Shingles
+
+Shinglers convert byte sequences to 32-bit hashes using MurmurHash3:
+
+```python
+def hashShingle(self, shingle, hash_seed=0):
+    """Produce a single 32bit UINT hash for a given shingle"""
+    return MinHash.hashData(shingle, hash_seed)
+
+# In MinHash class:
+@staticmethod
+def hashData(data, seed) -> int:
+    if isinstance(data, (str, bytes, bytearray)):
+        return mmh3.hash(data, seed) & MinHash._HASH_MAX
+    elif isinstance(data, list):
+        to_hash = "".join([str(elem) for elem in data])
+        return mmh3.hash(to_hash, seed) & MinHash._HASH_MAX
+```
+
+Source: `mcrit/shinglers/AbstractShingler.py:55-57`, `mcrit/minhash/MinHash.py:74-81`
+
+<Info>
+MCRIT uses MurmurHash3 for speed and good distribution. A C implementation is preferred (`mmh3`), with a Python fallback (`pymmh3`).
+</Info>
+
+## Creating Custom Shinglers
+
+To create a custom shingler:
+
+1. **Create a file** named `*Shingler.py` in the shinglers directory
+2. **Inherit from AbstractShingler**
+3. **Implement `_generateByteSequences()`**
+4. **Add to configuration** with desired weight
+
+### Example: Simple Mnemonic Histogram Shingler
+
+```python
+from collections import Counter
+from AbstractShingler import AbstractShingler
+
+class MnemonicHistogramShingler(AbstractShingler):
+    """Create a histogram of instruction mnemonics"""
+    
+    def __init__(self, config, weight=1):
+        super().__init__(__class__.__name__)
+        self._config = config
+        self._weight = weight
+    
+    def _generateByteSequences(self, function_object):
+        mnemonic_counts = Counter()
+        for instruction in function_object.getInstructions():
+            mnemonic_counts[instruction.mnemonic] += 1
+        
+        # Create shingles like "mov:15", "add:7", etc.
+        return [f"{mnem}:{count}" 
+                for mnem, count in mnemonic_counts.items()]
+```
+
+Then add to `ShinglerConfig`:
+```python
+SHINGLERS_WEIGHTS = {
+    "FuzzyStatPairShingler": 1,
+    "EscapedBlockShingler": 3,
+    "MnemonicHistogramShingler": 2  # New shingler
+}
+```
+
+## Shingler Loading
+
+Shinglers are discovered and loaded automatically:
+
+```python
+class ShingleLoader:
+    def getShinglers(self):
+        shingle_loader = ShingleLoader(self._shingler_config)
+        return shingle_loader.getShinglers()
+```
+
+The loader:
+1. Scans `SHINGLER_DIR` for `*Shingler.py` files
+2. Instantiates each shingler with configured weight
+3. Initializes XOR values for weight application
+4. Returns sorted list of shingler instances
+
+Source: `mcrit/minhash/MinHasher.py:46-48`
+
+## Best Practices
+
+<Tip>
+**Balancing Shinglers**: Use a mix of structural (fast, fuzzy) and semantic (precise, strict) shinglers for best results.
+</Tip>
+
+<Tip>
+**Weight Assignment**: Give higher weights to shinglers that capture the most discriminative features for your use case.
+</Tip>
+
+<Note>
+**Configuration Hashing**: Changing shingler configuration creates a new configuration hash, requiring recalculation of all MinHashes for consistency.
+</Note>
+
+## Related Concepts
+
+- [MinHash](/concepts/minhash) - How shingles are combined into signatures
+- [Matching](/concepts/matching) - How shingled functions are compared
+- [PicHash](/concepts/pichash) - Complementary exact matching approach

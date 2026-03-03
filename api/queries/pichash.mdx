@@ -1,0 +1,193 @@
+---
+title: "Query PicHash"
+description: "Find all functions matching a specific PicHash value"
+---
+
+## Get PicHash Matches
+
+Returns all functions in the database that match a specific PicHash value. PicHash (Position Independent Code Hash) is used to identify quasi-identical functions regardless of their position in memory.
+
+<ParamField path="pichash" type="string" required>
+  16-character hexadecimal PicHash value (e.g., "1234567890abcdef")
+</ParamField>
+
+### Request
+
+```bash
+curl -X GET "https://your-server.com/query/pichash/1234567890abcdef" \
+  -H "apitoken: YOUR_API_TOKEN"
+```
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request (`successful` or `failed`)
+</ResponseField>
+
+<ResponseField name="data" type="array">
+  Array of matches for the PicHash. Each entry is a tuple containing:
+  
+  <Expandable title="match tuple structure">
+    <ResponseField name="[0]" type="integer">
+      Family ID
+    </ResponseField>
+    <ResponseField name="[1]" type="integer">
+      Sample ID
+    </ResponseField>
+    <ResponseField name="[2]" type="integer">
+      Function ID
+    </ResponseField>
+    <ResponseField name="[3]" type="integer">
+      Function offset in the binary
+    </ResponseField>
+    <ResponseField name="[4]" type="integer">
+      Function size in bytes
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": [
+    [15, 789, 1023, 8192, 256],
+    [15, 790, 1045, 8192, 256],
+    [16, 801, 1100, 4096, 260],
+    [1, 45, 234, 2048, 256]
+  ]
+}
+```
+
+In this example:
+- First match: Family 15, Sample 789, Function 1023 at offset 8192 (256 bytes)
+- Second match: Family 15, Sample 790, Function 1045 at offset 8192 (256 bytes)
+- Third match: Family 16, Sample 801, Function 1100 at offset 4096 (260 bytes)
+- Fourth match: Family 1 (library), Sample 45, Function 234 at offset 2048 (256 bytes)
+
+### Error Response
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "No valid PicHash provided."
+  }
+}
+```
+
+Returns HTTP 400 if the PicHash format is invalid (must be exactly 16 hexadecimal characters).
+
+## Get PicHash Summary
+
+Returns aggregated statistics for all functions matching a PicHash value.
+
+<ParamField path="pichash" type="string" required>
+  16-character hexadecimal PicHash value (e.g., "1234567890abcdef")
+</ParamField>
+
+### Request
+
+```bash
+curl -X GET "https://your-server.com/query/pichash/1234567890abcdef/summary" \
+  -H "apitoken: YOUR_API_TOKEN"
+```
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request (`successful` or `failed`)
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Summary statistics for the PicHash matches
+  
+  <Expandable title="data properties">
+    <ResponseField name="families" type="integer">
+      Number of unique families containing this PicHash
+    </ResponseField>
+    <ResponseField name="samples" type="integer">
+      Number of unique samples containing this PicHash
+    </ResponseField>
+    <ResponseField name="functions" type="integer">
+      Number of unique functions with this PicHash
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "families": 3,
+    "samples": 45,
+    "functions": 67
+  }
+}
+```
+
+This indicates:
+- The PicHash appears in 3 different malware families
+- Found across 45 unique samples
+- Matched 67 function instances in total
+
+### Error Response
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "No valid PicHash provided."
+  }
+}
+```
+
+Returns HTTP 400 if the PicHash format is invalid.
+
+## Use Cases
+
+### Identify Library Functions
+
+PicHash is excellent for identifying common library functions:
+
+```bash
+# Find all instances of a specific function
+curl -X GET "https://your-server.com/query/pichash/a1b2c3d4e5f6a7b8" \
+  -H "apitoken: YOUR_API_TOKEN"
+```
+
+### Analyze Code Reuse
+
+Track how specific functions are reused across malware families:
+
+```bash
+# Get summary to see prevalence
+curl -X GET "https://your-server.com/query/pichash/1234567890abcdef/summary" \
+  -H "apitoken: YOUR_API_TOKEN"
+```
+
+A high number of families suggests common library code or widely shared malicious functionality.
+
+### Find Exact Matches
+
+PicHash provides exact matching for position-independent code, making it ideal for:
+- Identifying compiler-generated stub functions
+- Finding encryption/decryption routines
+- Detecting obfuscation helpers
+- Matching utility functions across samples
+
+## PicHash Format
+
+PicHash values are:
+- 64-bit hashes represented as 16 hexadecimal characters
+- Case-insensitive (both uppercase and lowercase accepted)
+- Must match the regex pattern: `[a-fA-F0-9]{16}`
+
+Examples of valid PicHash values:
+- `1234567890abcdef`
+- `ABCDEF1234567890`
+- `a1b2c3d4e5f6a7b8`
+- `0000000000000000`

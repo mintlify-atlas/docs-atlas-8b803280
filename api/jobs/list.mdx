@@ -1,0 +1,248 @@
+---
+title: 'List Jobs'
+description: 'Retrieve a paginated list of jobs with optional filtering'
+---
+
+## GET /jobs
+
+Retrieve a list of jobs from the queue with optional filtering by method, state, and custom queries. Results can be paginated and sorted.
+
+### Query Parameters
+
+<ParamField query="start" type="integer" default="0">
+  Start index for pagination (job ID to start from)
+</ParamField>
+
+<ParamField query="limit" type="integer" default="0">
+  Maximum number of jobs to return (0 means no limit)
+</ParamField>
+
+<ParamField query="method" type="string">
+  Filter jobs by method name. Available methods include:
+  - `getMatchesForSample` - Matching jobs
+  - `getMatchesForSampleVs` - Sample comparison jobs
+  - `getMatchesForUnmappedBinary` - Query jobs for unmapped binaries
+  - `getMatchesForMappedBinary` - Query jobs for mapped binaries
+  - `getMatchesForSmdaReport` - Query jobs for SMDA reports
+  - `getUniqueBlocks` - Unique blocks analysis jobs
+  - `updateMinHashesForSample` - MinHash update jobs
+  - `addBinarySample` - Sample addition jobs
+  - `deleteSample` - Sample deletion jobs
+  - `modifySample` - Sample modification jobs
+  - `deleteFamily` - Family deletion jobs
+  - `modifyFamily` - Family modification jobs
+  - `rebuildIndex` - Index rebuild jobs
+</ParamField>
+
+<ParamField query="state" type="string">
+  Filter jobs by state (e.g., finished, pending, failed)
+</ParamField>
+
+<ParamField query="filter" type="string">
+  Custom query filter for additional filtering
+</ParamField>
+
+<ParamField query="ascending" type="boolean" default="false">
+  Sort order. Set to `true` for ascending order, `false` for descending
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request. Returns `"successful"` on success.
+</ResponseField>
+
+<ResponseField name="data" type="array">
+  Array of job objects matching the query parameters.
+  
+  <Expandable title="Job Object Properties">
+    <ResponseField name="_id" type="string">
+      Job ID (24-character hexadecimal string)
+    </ResponseField>
+    
+    <ResponseField name="number" type="integer">
+      Sequential job number
+    </ResponseField>
+    
+    <ResponseField name="payload" type="object">
+      Job payload containing method and parameters
+      
+      <Expandable title="Payload Properties">
+        <ResponseField name="method" type="string">
+          The method being executed by this job
+        </ResponseField>
+        
+        <ResponseField name="params" type="string">
+          JSON string containing method parameters
+        </ResponseField>
+        
+        <ResponseField name="descriptor" type="string">
+          Job descriptor for caching and identification
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="priority" type="integer">
+      Job priority level
+    </ResponseField>
+    
+    <ResponseField name="attempts_left" type="integer">
+      Number of retry attempts remaining (0 indicates failed job)
+    </ResponseField>
+    
+    <ResponseField name="created_at" type="string">
+      ISO 8601 timestamp when the job was created
+    </ResponseField>
+    
+    <ResponseField name="started_at" type="string">
+      ISO 8601 timestamp when the job started execution
+    </ResponseField>
+    
+    <ResponseField name="finished_at" type="string">
+      ISO 8601 timestamp when the job finished (null if not finished)
+    </ResponseField>
+    
+    <ResponseField name="locked_by" type="string">
+      Worker ID that locked this job for processing
+    </ResponseField>
+    
+    <ResponseField name="locked_at" type="string">
+      ISO 8601 timestamp when the job was locked
+    </ResponseField>
+    
+    <ResponseField name="progress" type="number">
+      Job progress from 0 to 1 (1 indicates completion)
+    </ResponseField>
+    
+    <ResponseField name="result" type="string">
+      GridFS ID of the result object (null if not finished)
+    </ResponseField>
+    
+    <ResponseField name="last_error" type="string">
+      Error message from last failed attempt (null if no errors)
+    </ResponseField>
+    
+    <ResponseField name="terminated" type="boolean">
+      Whether the job has been terminated
+    </ResponseField>
+    
+    <ResponseField name="all_dependencies" type="array">
+      Array of job IDs that this job depends on
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-mcrit-instance.com/jobs?method=getMatchesForSample&limit=10&ascending=false" \
+  -H "apitoken: your-api-token"
+```
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": [
+    {
+      "_id": "507f1f77bcf86cd799439011",
+      "number": 42,
+      "payload": {
+        "method": "getMatchesForSample",
+        "params": "{\"0\": 1}",
+        "descriptor": "sample_1_matching"
+      },
+      "priority": 0,
+      "attempts_left": 1,
+      "created_at": "2023-01-12T10:00:00.000000",
+      "started_at": "2023-01-12T10:00:01.000000",
+      "finished_at": "2023-01-12T10:01:17.468680",
+      "locked_by": "worker-1",
+      "locked_at": "2023-01-12T10:00:01.000000",
+      "progress": 1,
+      "result": "607f1f77bcf86cd799439099",
+      "last_error": null,
+      "terminated": false,
+      "all_dependencies": []
+    }
+  ]
+}
+```
+
+## GET /jobs/stats
+
+Retrieve queue statistics including job counts by state and method.
+
+### Query Parameters
+
+<ParamField query="with_refresh" type="boolean" default="false">
+  Refresh the statistics before returning. Set to `true` to force recalculation.
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request. Returns `"successful"` on success.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Queue statistics object containing counts and metrics.
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-mcrit-instance.com/jobs/stats?with_refresh=true" \
+  -H "apitoken: your-api-token"
+```
+
+## DELETE /jobs
+
+Delete multiple jobs based on filtering criteria. All filters are combined with AND logic.
+
+### Query Parameters
+
+<ParamField query="method" type="string">
+  Delete only jobs with this method name
+</ParamField>
+
+<ParamField query="created_before" type="string">
+  Delete jobs created before this date. Format: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS`
+</ParamField>
+
+<ParamField query="finished_before" type="string">
+  Delete jobs finished before this date. Format: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS`
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request. Returns `"successful"` on success.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <Expandable title="Deletion Result">
+    <ResponseField name="num_deleted" type="integer">
+      Number of jobs that were deleted
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X DELETE "https://your-mcrit-instance.com/jobs?method=getMatchesForSample&finished_before=2023-01-01" \
+  -H "apitoken: your-api-token"
+```
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "num_deleted": 15
+  }
+}
+```

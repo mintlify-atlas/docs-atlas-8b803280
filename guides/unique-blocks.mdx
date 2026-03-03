@@ -1,0 +1,269 @@
+---
+title: Unique Blocks Identification
+description: Identify unique code blocks within malware samples for signature generation and detection
+---
+
+MCRIT can identify unique basic blocks within a set of samples and generate YARA rules for detection. This is useful for creating signatures that distinguish specific malware variants.
+
+## What are Unique Blocks?
+
+Unique blocks are basic blocks (sequences of instructions) that:
+- Appear in target samples
+- Do NOT appear in the broader database
+- Can be used to uniquely identify the target samples
+
+MCRIT uses **PicBlockHash** (position-independent code block hashes) to identify these blocks.
+
+## Finding Unique Blocks
+
+Use the Python client to identify unique blocks:
+
+```python
+from mcrit.client.McritClient import McritClient
+from mcrit.storage.UniqueBlocksResult import UniqueBlocksResult
+
+client = McritClient("http://127.0.0.1:8000")
+
+# Get sample IDs for analysis
+family = client.getFamily(family_id=2, with_samples=True)
+sample_ids = list(family.samples.keys())
+
+# Request unique blocks analysis
+job_id = client.requestUniqueBlocks(
+    sample_ids=sample_ids,
+    family_id=2
+)
+
+# Wait for results
+print(f"Job started: {job_id}")
+result_dict = client.awaitResult(job_id)
+
+# Parse results
+result = UniqueBlocksResult.fromDict(result_dict)
+```
+
+## Understanding Results
+
+The UniqueBlocksResult provides:
+
+```python
+# Statistics
+print(f"Unique blocks found: {result.statistics['num_unique_blocks']}")
+print(f"Samples covered: {result.statistics['num_samples_covered']}/{len(sample_ids)}")
+print(f"Has YARA rule: {result.statistics['has_yara_rule']}")
+print(f"Complete coverage: {result.statistics['has_complete_yara_rule']}")
+
+# Access unique blocks
+for block_hash, block_info in result.unique_blocks.items():
+    print(f"\nBlock: {block_hash}")
+    print(f"  Score: {block_info['score']}")
+    print(f"  Appears in {len(block_info['samples'])} samples")
+    print(f"  Function: {block_info['function_id']}")
+    print(f"  Offset: 0x{block_info['offset']:x}")
+    print(f"  Instructions: {len(block_info['instructions'])}")
+    print(f"  Escaped sequence: {block_info['escaped_sequence']}")
+```
+
+## YARA Rule Generation
+
+MCRIT automatically generates a YARA rule using a greedy set cover algorithm:
+
+```python
+# Get generated YARA rule
+yara_rule = result.yara_rule
+
+print(f"YARA rule uses {len(yara_rule)} unique blocks")
+print(f"Covers {result.statistics['num_samples_covered']} samples")
+
+# Display YARA blocks
+for block_hash in yara_rule:
+    block = result.unique_blocks[block_hash]
+    print(f"\nYARA block: {block_hash}")
+    print(f"  Escaped: {block['escaped_sequence']}")
+    print(f"  Covers: {len(block['samples'])} samples")
+```
+
+## Generate YARA File
+
+Create a complete YARA rule from the results:
+
+```python
+def generate_yara_rule(result, rule_name, family_name):
+    yara_lines = []
+    yara_lines.append(f"rule {rule_name} {{")
+    yara_lines.append("    meta:")
+    yara_lines.append(f"        description = \"Unique blocks for {family_name}\"")
+    yara_lines.append(f"        author = \"MCRIT\"")
+    yara_lines.append(f"        date = \"2026-03-03\"")
+    yara_lines.append(f"        num_blocks = {len(result.yara_rule)}")
+    yara_lines.append(f"        coverage = {result.statistics['num_samples_covered']} samples")
+    yara_lines.append("")
+    yara_lines.append("    strings:")
+    
+    for idx, block_hash in enumerate(result.yara_rule):
+        block = result.unique_blocks[block_hash]
+        escaped = block['escaped_sequence']
+        yara_lines.append(f"        $block_{idx} = {{ {escaped} }}")
+    
+    yara_lines.append("")
+    yara_lines.append("    condition:")
+    # Require at least 10 blocks to match
+    yara_lines.append(f"        10 of them")
+    yara_lines.append("}")
+    
+    return "\n".join(yara_lines)
+
+# Generate rule
+yara_rule_text = generate_yara_rule(result, "Emotet_2024_Q1", "win.emotet")
+
+# Save to file
+with open("emotet_2024_q1.yar", "w") as f:
+    f.write(yara_rule_text)
+
+print("YARA rule saved to emotet_2024_q1.yar")
+```
+
+## Escaped Binary Sequences
+
+Each unique block includes an escaped binary sequence suitable for YARA:
+
+```python
+for block_hash in result.yara_rule[:3]:  # First 3 blocks
+    block = result.unique_blocks[block_hash]
+    print(f"\nBlock: {block_hash}")
+    print(f"Escaped: {block['escaped_sequence']}")
+    print("\nInstructions:")
+    for insn in block['instructions']:
+        print(f"  0x{insn[0]:x}: {insn[2]} {insn[3]}")
+```
+
+## Set Cover Algorithm
+
+MCRIT uses a greedy algorithm to select blocks that maximize sample coverage:
+
+<Steps>
+  <Step title="Initialize">
+    Start with all unique blocks as candidates.
+  </Step>
+
+  <Step title="Score blocks">
+    For each block, calculate how many uncovered samples it can cover.
+  </Step>
+
+  <Step title="Select best block">
+    Choose the block that covers the most uncovered samples.
+  </Step>
+
+  <Step title="Update coverage">
+    Mark samples as covered (requires 10 block hits per sample).
+  </Step>
+
+  <Step title="Repeat">
+    Continue until all samples are covered or no blocks remain.
+  </Step>
+</Steps>
+
+Implementation: Worker.py:330-390
+
+## Coverage Requirements
+
+By default, a sample is considered "covered" when it contains at least **10 unique blocks**:
+
+```python
+covers_required = 10  # Worker.py:341
+```
+
+This ensures robust detection and reduces false positives.
+
+## Use Cases
+
+### Malware Family Signatures
+
+```python
+# Get all emotet samples
+family = client.getFamily(family_id=5, with_samples=True)
+sample_ids = list(family.samples.keys())
+
+# Find unique blocks
+job_id = client.requestUniqueBlocks(sample_ids, family_id=5)
+result = UniqueBlocksResult.fromDict(client.awaitResult(job_id))
+
+# Generate YARA rule
+yara = generate_yara_rule(result, "Emotet_Family", "win.emotet")
+```
+
+### Campaign-Specific Detection
+
+```python
+# Get samples from specific campaign/version
+family = client.getFamily(family_id=5, with_samples=True)
+campaign_samples = [
+    sid for sid, s in family.samples.items() 
+    if s.version == "2024-Q1"
+]
+
+# Find blocks unique to this campaign
+job_id = client.requestUniqueBlocks(campaign_samples)
+result = UniqueBlocksResult.fromDict(client.awaitResult(job_id))
+```
+
+### Variant Differentiation
+
+```python
+# Compare two malware variants
+variant_a_ids = [1, 2, 3, 4, 5]
+variant_b_ids = [6, 7, 8, 9, 10]
+
+# Find unique blocks for variant A
+job_a = client.requestUniqueBlocks(variant_a_ids)
+result_a = UniqueBlocksResult.fromDict(client.awaitResult(job_a))
+
+# Find unique blocks for variant B  
+job_b = client.requestUniqueBlocks(variant_b_ids)
+result_b = UniqueBlocksResult.fromDict(client.awaitResult(job_b))
+
+# Compare
+print(f"Variant A unique blocks: {result_a.statistics['num_unique_blocks']}")
+print(f"Variant B unique blocks: {result_b.statistics['num_unique_blocks']}")
+```
+
+## Block Scoring
+
+Blocks are scored based on:
+- **Frequency**: How many target samples contain the block
+- **Uniqueness**: Absence in the broader database
+- **Coverage value**: How many uncovered samples it can identify
+
+```python
+for block_hash, block_info in result.unique_blocks.items():
+    score = block_info['score']
+    sample_count = len(block_info['samples'])
+    print(f"Block {block_hash[:8]}: score={score}, samples={sample_count}")
+```
+
+## Instruction Escaping
+
+Instructions are escaped for position-independence:
+
+- **Intraprocedural jumps**: Wildcarded
+- **Immediate values**: Preserved or wildcarded based on context
+- **Memory references**: Escaped for relocatable code
+
+Implementation: Worker.py:378-387 using IntelInstructionEscaper
+
+## Limitations
+
+- Requires sufficient unique code (obfuscated/packed code may have fewer unique blocks)
+- Complete coverage not guaranteed if samples share too much common code
+- YARA rules may be large for diverse sample sets
+- Threshold of 10 blocks may need adjustment for small samples
+
+## Best Practices
+
+- Analyze samples from the same family/campaign together
+- Ensure samples are unpacked before analysis
+- Review generated YARA rules for quality
+- Test YARA rules against known samples before deployment
+- Adjust coverage requirements based on sample size
+- Combine with other indicators (strings, imports) for robust detection
+- Periodically regenerate rules as database grows

@@ -1,0 +1,165 @@
+---
+title: Configuration
+description: View and manage MCRIT configuration settings
+---
+
+## Get Configuration
+
+<CodeGroup>
+```bash curl
+curl -X GET https://your-mcrit-instance.com/config \
+  -H "apitoken: YOUR_API_TOKEN"
+```
+</CodeGroup>
+
+<Warning>
+  This endpoint is currently not implemented and will return a 501 Not Implemented status.
+</Warning>
+
+<ResponseExample>
+```json Response
+{
+  "status": "failed",
+  "message": "Not implemented"
+}
+```
+</ResponseExample>
+
+This endpoint is reserved for future functionality to retrieve MCRIT configuration settings.
+
+---
+
+## Configuration Overview
+
+MCRIT uses several configuration objects that control its behavior:
+
+### MinHash Configuration
+
+Controls the MinHash algorithm parameters:
+
+<ParamField body="MINHASH_SIGNATURE_BITS" type="integer" default="64">
+  Number of bits in each MinHash signature
+</ParamField>
+
+<ParamField body="MINHASH_PERMUTATIONS" type="integer" default="128">
+  Number of hash permutations to generate
+</ParamField>
+
+<ParamField body="MINHASH_BANDS" type="integer" default="32">
+  Number of bands for Locality-Sensitive Hashing (LSH)
+</ParamField>
+
+### Shingler Configuration
+
+Controls the shingling process for code tokenization:
+
+<ParamField body="SHINGLER_SIZE" type="integer" default="4">
+  Size of instruction shingles
+</ParamField>
+
+<ParamField body="SHINGLER_NORMALIZATION" type="boolean" default="true">
+  Enable instruction normalization
+</ParamField>
+
+### Storage Configuration
+
+Controls database and storage behavior:
+
+<ParamField body="STORAGE_METHOD" type="string" default="mongodb">
+  Storage backend to use ("mongodb", "memory", etc.)
+</ParamField>
+
+<ParamField body="STORAGE_MONGODB_DBNAME" type="string" default="mcrit">
+  MongoDB database name
+</ParamField>
+
+<ParamField body="STORAGE_MONGODB_HOST" type="string" default="localhost">
+  MongoDB host address
+</ParamField>
+
+<ParamField body="STORAGE_MONGODB_PORT" type="integer" default="27017">
+  MongoDB port number
+</ParamField>
+
+<ParamField body="STORAGE_MAX_EXPORT_SIZE" type="integer" default="1073741824">
+  Maximum export size in bytes (default: 1GB)
+</ParamField>
+
+<ParamField body="STORAGE_MONGODB_ENABLE_CLEANUP" type="boolean" default="true">
+  Enable automatic cleanup of query samples
+</ParamField>
+
+<ParamField body="STORAGE_MONGODB_CLEANUP_DELTA" type="integer" default="86400">
+  Cleanup interval in seconds (default: 24 hours)
+</ParamField>
+
+### Queue Configuration
+
+Controls job queue behavior:
+
+<ParamField body="QUEUE_METHOD" type="string" default="fake">
+  Queue backend to use ("fake", "redis", etc.)
+</ParamField>
+
+<ParamField body="QUEUE_REDIS_HOST" type="string" default="localhost">
+  Redis host for queue backend
+</ParamField>
+
+<ParamField body="QUEUE_REDIS_PORT" type="integer" default="6379">
+  Redis port number
+</ParamField>
+
+---
+
+## Configuration Hash
+
+MCRIT generates configuration hashes to ensure compatibility when importing/exporting data. The MinHash and Shingler configurations must match between instances for data to be compatible.
+
+<Info>
+  Configuration hashes are included in export data and validated during import to prevent mismatches that could lead to incorrect similarity results.
+</Info>
+
+### Example Configuration Object
+
+```json
+{
+  "config": {
+    "minhash_config": {
+      "MINHASH_SIGNATURE_BITS": 64,
+      "MINHASH_PERMUTATIONS": 128,
+      "MINHASH_BANDS": 32
+    },
+    "shingler_config": {
+      "SHINGLER_SIZE": 4,
+      "SHINGLER_NORMALIZATION": true
+    },
+    "storage_config": {
+      "STORAGE_METHOD": "mongodb",
+      "STORAGE_MONGODB_DBNAME": "mcrit",
+      "STORAGE_MONGODB_HOST": "localhost",
+      "STORAGE_MONGODB_PORT": 27017,
+      "STORAGE_MAX_EXPORT_SIZE": 1073741824
+    },
+    "queue_config": {
+      "QUEUE_METHOD": "fake"
+    }
+  }
+}
+```
+
+---
+
+## Environment Variables
+
+MCRIT configuration can be controlled via environment variables:
+
+- `MCRIT_MONGODB_HOST` - MongoDB host address
+- `MCRIT_MONGODB_PORT` - MongoDB port number
+- `MCRIT_MONGODB_DBNAME` - Database name
+- `MCRIT_AUTH_TOKEN` - API authentication token
+- `MCRIT_REDIS_HOST` - Redis host for queue
+- `MCRIT_REDIS_PORT` - Redis port number
+
+<Tip>
+  Set `MCRIT_AUTH_TOKEN` to an empty string to disable API authentication (not recommended for production).
+</Tip>

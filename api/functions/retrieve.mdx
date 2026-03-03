@@ -1,0 +1,208 @@
+---
+title: Retrieve Function
+description: Get detailed information about a specific function by its ID
+---
+
+## GET /functions/{function_id}
+
+Retrieves comprehensive information about a specific function, including its metadata, MinHash signature, architecture details, and optionally its extended control flow graph (XCFG).
+
+### Path Parameters
+
+<ParamField path="function_id" type="integer" required>
+  Unique identifier of the function to retrieve
+</ParamField>
+
+### Query Parameters
+
+<ParamField query="with_xcfg" type="boolean" default="false">
+  Include the extended control flow graph (XCFG) in the response. Set to `true` to include full disassembly and control flow information.
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string" required>
+  Status of the request. Returns `"successful"` on success or `"failed"` if the function is not found.
+</ResponseField>
+
+<ResponseField name="data" type="object" required>
+  Function object containing all metadata and analysis results
+  
+  <Expandable title="Function Details">
+    <ResponseField name="function_id" type="integer" required>
+      Unique identifier for the function
+    </ResponseField>
+    
+    <ResponseField name="family_id" type="integer" required>
+      ID of the malware family this function belongs to
+    </ResponseField>
+    
+    <ResponseField name="sample_id" type="integer" required>
+      ID of the binary sample containing this function
+    </ResponseField>
+    
+    <ResponseField name="function_name" type="string" required>
+      Name of the function as identified during analysis
+    </ResponseField>
+    
+    <ResponseField name="architecture" type="string" required>
+      CPU architecture of the function (e.g., "intel", "arm", "mips")
+    </ResponseField>
+    
+    <ResponseField name="offset" type="integer" required>
+      Memory offset/address of the function in the binary (encoded as two's complement)
+    </ResponseField>
+    
+    <ResponseField name="num_blocks" type="integer" required>
+      Number of basic blocks in the function's control flow graph
+    </ResponseField>
+    
+    <ResponseField name="num_instructions" type="integer" required>
+      Total number of assembly instructions in the function
+    </ResponseField>
+    
+    <ResponseField name="binweight" type="number" required>
+      Binary weight metric used for function comparison
+    </ResponseField>
+    
+    <ResponseField name="pichash" type="integer" required>
+      Position-independent code hash for the entire function
+    </ResponseField>
+    
+    <ResponseField name="picblockhashes" type="array" required>
+      Array of position-independent hashes for each basic block
+    </ResponseField>
+    
+    <ResponseField name="minhash" type="string" required>
+      MinHash signature as a hexadecimal string, used for similarity matching
+    </ResponseField>
+    
+    <ResponseField name="minhash_shingle_composition" type="object" required>
+      Detailed composition data showing how the MinHash was constructed from code shingles
+    </ResponseField>
+    
+    <ResponseField name="function_labels" type="array" required>
+      Array of user-assigned labels for categorizing or annotating this function
+      
+      <Expandable title="FunctionLabelEntry">
+        <ResponseField name="function_label" type="string" required>
+          The label text (e.g., "encryption", "network_communication")
+        </ResponseField>
+        
+        <ResponseField name="username" type="string" required>
+          Username of the analyst who created the label
+        </ResponseField>
+        
+        <ResponseField name="timestamp" type="string" required>
+          ISO 8601 timestamp when the label was created (format: YYYY-MM-DDTHH:MM:SS)
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="matches" type="object" required>
+      Dictionary containing match information from similarity analysis
+    </ResponseField>
+    
+    <ResponseField name="xcfg" type="object">
+      Extended control flow graph representation containing:
+      - Disassembly for each basic block
+      - Control flow edges
+      - Instruction-level details
+      - API calls and imports
+      
+      Only included when `with_xcfg=true` is specified in the query parameters.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.example.com/functions/12345" \
+  -H "apitoken: your-api-token"
+```
+
+### Example Request with XCFG
+
+```bash
+curl -X GET "https://api.example.com/functions/12345?with_xcfg=true" \
+  -H "apitoken: your-api-token"
+```
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "function_id": 12345,
+    "family_id": 42,
+    "sample_id": 789,
+    "function_name": "sub_401000",
+    "architecture": "intel",
+    "offset": 4198400,
+    "num_blocks": 15,
+    "num_instructions": 87,
+    "binweight": 0.234,
+    "pichash": 1234567890,
+    "picblockhashes": [
+      987654321,
+      876543210,
+      765432109
+    ],
+    "minhash": "a1b2c3d4e5f67890abcdef1234567890",
+    "minhash_shingle_composition": {
+      "shingle_size": 3,
+      "num_shingles": 45
+    },
+    "function_labels": [
+      {
+        "function_label": "decryption_routine",
+        "username": "analyst1",
+        "timestamp": "2026-03-01T14:30:00"
+      },
+      {
+        "function_label": "xor_cipher",
+        "username": "analyst2",
+        "timestamp": "2026-03-02T09:15:22"
+      }
+    ],
+    "matches": {},
+    "xcfg": null
+  }
+}
+```
+
+### Error Responses
+
+<ResponseField name="status" type="string">
+  Returns `"failed"` when the function is not found
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <Expandable title="Error Details">
+    <ResponseField name="message" type="string">
+      Human-readable error message
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### 404 Not Found
+
+Returned when the requested function ID does not exist in the database.
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "We don't have a function with that id."
+  }
+}
+```
+
+### Usage Notes
+
+- The `xcfg` field can be very large and should only be requested when full disassembly information is needed
+- MinHash signatures are used for efficient similarity search across the database
+- The `offset` field uses two's complement encoding and may need to be decoded for display
+- PicHash values enable position-independent code matching across different compilations

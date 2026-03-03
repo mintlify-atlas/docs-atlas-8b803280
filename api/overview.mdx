@@ -1,0 +1,185 @@
+---
+title: API Overview
+description: Overview of the MCRIT REST API including base URL, response formats, and error handling
+---
+
+## Introduction
+
+The MCRIT REST API provides programmatic access to MCRIT's malware code analysis and similarity detection capabilities. The API is built using the Falcon web framework and returns JSON-formatted responses.
+
+## Base URL
+
+The API runs on a configurable host and port. The default base URL is:
+
+```
+http://localhost:8000
+```
+
+All API endpoints are relative to this base URL.
+
+## Response Format
+
+All API responses follow a consistent JSON structure with two main fields:
+
+<ResponseField name="status" type="string" required>
+  Indicates the result of the request. Possible values:
+  - `successful` - Request completed successfully
+  - `failed` - Request failed due to an error
+</ResponseField>
+
+<ResponseField name="data" type="object" required>
+  Contains the response payload. The structure varies by endpoint:
+  - On success: Contains the requested data or result
+  - On failure: Contains a `message` field with error details
+</ResponseField>
+
+### Success Response Example
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "message": "Welcome to MCRIT"
+  }
+}
+```
+
+### Error Response Example
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "We don't have a sample with that id."
+  }
+}
+```
+
+## HTTP Status Codes
+
+The API uses standard HTTP status codes to indicate success or failure:
+
+| Status Code | Description | Usage |
+|-------------|-------------|-------|
+| `200 OK` | Success | Successful GET requests |
+| `202 Accepted` | Accepted | Successful POST/PUT/DELETE requests that are processed asynchronously |
+| `400 Bad Request` | Client Error | Invalid request parameters or missing required fields |
+| `401 Unauthorized` | Authentication Error | Missing or invalid API token |
+| `404 Not Found` | Not Found | Requested resource does not exist |
+| `409 Conflict` | Conflict | Resource already exists (e.g., duplicate sample) |
+| `501 Not Implemented` | Not Implemented | Endpoint is not yet implemented |
+
+## Common Error Messages
+
+### Resource Not Found
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "We don't have a sample with that id."
+  }
+}
+```
+
+HTTP Status: `404 Not Found`
+
+### Invalid Request Body
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "POST request without body can't be processed."
+  }
+}
+```
+
+HTTP Status: `400 Bad Request`
+
+### Invalid Input Format
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "No valid SHA256 provided."
+  }
+}
+```
+
+HTTP Status: `400 Bad Request`
+
+### Resource Conflict
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "Conflict: Binary already exists as sample with ID: 123."
+  }
+}
+```
+
+HTTP Status: `409 Conflict`
+
+## API Version
+
+The current API version is **1.4.5**. You can retrieve version information using:
+
+```bash
+GET /version
+```
+
+## Request Headers
+
+Optional headers you can include with requests:
+
+<ParamField header="username" type="string" default="anonymous">
+  Username for logging and tracking purposes. Defaults to "anonymous" if not provided.
+</ParamField>
+
+<ParamField header="apitoken" type="string">
+  API authentication token. Required if authentication is enabled on the server.
+</ParamField>
+
+## Quick Start Example
+
+Here's a simple example to get started:
+
+```bash
+# Check API status
+curl http://localhost:8000/
+
+# Response:
+{
+  "status": "successful",
+  "data": {
+    "message": "Welcome to MCRIT"
+  }
+}
+```
+
+```bash
+# Get version information
+curl http://localhost:8000/version
+
+# Response:
+{
+  "status": "successful",
+  "data": "1.4.5"
+}
+```
+
+## Data Encoding
+
+All responses use BSON's `json_util` for encoding, which properly handles MongoDB-specific types and ensures consistent JSON serialization across the API.
+
+## URL Path Handling
+
+The API automatically strips trailing slashes from URL paths. Both of these requests are equivalent:
+
+```
+GET /status
+GET /status/
+```

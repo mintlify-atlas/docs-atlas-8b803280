@@ -1,0 +1,536 @@
+---
+title: IDA Plugin
+description: Integrate MCRIT directly into IDA Pro for interactive malware analysis and code similarity matching
+---
+
+The MCRIT IDA plugin provides seamless integration with IDA Pro, enabling you to query code similarity, import function labels, and visualize matches directly within your reverse engineering workflow.
+
+<Note>
+  The IDA plugin has been moved to a separate repository: [mcrit-plugins](https://github.com/danielplohmann/mcrit-plugins)
+</Note>
+
+## Installation
+
+<Steps>
+  <Step title="Create configuration file">
+    Copy the template configuration and customize for your MCRIT instance:
+
+    ```bash
+    cd ./plugins/ida/
+    cp template.config.py config.py
+    ```
+  </Step>
+
+  <Step title="Edit configuration">
+    Update `config.py` with your MCRIT server details:
+
+    ```python
+    # config.py
+    MCRIT_SERVER = "http://localhost:8000"
+    MCRIT_APITOKEN = "your-api-token"  # Optional
+    MCRIT_USERNAME = "analyst"         # Optional
+    ```
+  </Step>
+
+  <Step title="Load plugin in IDA">
+    Run the plugin script in IDA Pro:
+
+    ```
+    File -> Script file -> ./plugins/ida/ida_mcrit.py
+    ```
+
+    Or use IDA's Python console:
+    ```python
+    import idaapi
+    idaapi.require("ida_mcrit")
+    ```
+  </Step>
+</Steps>
+
+## Features
+
+The IDA plugin provides comprehensive integration with MCRIT functionality:
+
+### Sample Submission
+
+<Tabs>
+  <Tab title="Submit Current Binary">
+    Submit the currently loaded binary to MCRIT:
+
+    ```python
+    # Via plugin menu:
+    # MCRIT -> Submit Current Sample
+    ```
+
+    The plugin will:
+    - Disassemble using SMDA
+    - Extract metadata from IDA database
+    - Submit to MCRIT server
+    - Track job status
+  </Tab>
+
+  <Tab title="Set Metadata">
+    Configure family and version before submission:
+
+    ```python
+    # Via plugin interface
+    Family: emotet
+    Version: 2023.01
+    Mark as library: [ ]
+    ```
+  </Tab>
+</Tabs>
+
+### Function Matching
+
+<Tabs>
+  <Tab title="Query Current Function">
+    Match the currently viewed function against the database:
+
+    **Steps:**
+    1. Navigate to function in IDA disassembly view
+    2. Select: `MCRIT -> Query Current Function`
+    3. Review matches in results window
+
+    **Match Results Show:**
+    - Function names from matching samples
+    - MinHash similarity scores
+    - PicHash matches
+    - Sample metadata (family, version)
+  </Tab>
+
+  <Tab title="PicBlockHash Query">
+    Query matches for basic blocks using PicBlockHash:
+
+    **Usage:**
+    1. Select basic block in function
+    2. Run: `MCRIT -> Query PicBlockHash`
+    3. View all matching blocks across database
+
+    **Use cases:**
+    - Identify code reuse at block level
+    - Find similar implementations
+    - Track specific algorithms
+  </Tab>
+
+  <Tab title="Filter Results">
+    Filter matches by various criteria:
+
+    ```python
+    # Filter options
+    Min block size: 10 instructions
+    Min MinHash score: 0.75
+    Exclude libraries: [x]
+    ```
+  </Tab>
+</Tabs>
+
+### Sample Matching
+
+<CardGroup cols={2}>
+  <Card title="Full Sample Match" icon="file-code">
+    Match entire current binary against database
+    
+    **Menu:** `MCRIT -> Match Current Sample`
+    
+    Returns matches ranked by:
+    - Function match count
+    - Weighted similarity scores
+    - Family aggregation
+  </Card>
+
+  <Card title="Cross Matching" icon="diagram-project">
+    Match multiple samples against each other
+    
+    **Menu:** `MCRIT -> Cross Match Samples`
+    
+    Useful for:
+    - Variant analysis
+    - Family clustering
+    - Evolution tracking
+  </Card>
+</CardGroup>
+
+### Label Import
+
+Import function labels from matching samples:
+
+<Steps>
+  <Step title="Run matching query">
+    Execute sample or function matching to get candidates
+  </Step>
+
+  <Step title="Review matches">
+    Examine match results and select samples to import labels from
+  </Step>
+
+  <Step title="Batch import labels">
+    ```python
+    # Via plugin menu:
+    # MCRIT -> Import Labels from Matches
+    ```
+
+    Options:
+    - Import all labels
+    - Import only high-confidence matches
+    - Preview before applying
+  </Step>
+
+  <Step title="Verify in IDA">
+    Labels automatically applied to matching functions in IDA database
+  </Step>
+</Steps>
+
+### Graph Visualization
+
+Display colored control flow graphs for remote functions:
+
+<Tabs>
+  <Tab title="View Remote CFG">
+    ```python
+    # Select matched function in results
+    # Click "Show Remote Graph"
+    ```
+
+    The plugin will:
+    - Fetch function CFG from MCRIT
+    - Render colored graph in IDA
+    - Highlight similar blocks
+  </Tab>
+
+  <Tab title="Compare Graphs">
+    Side-by-side comparison:
+    
+    - Local function (current IDB)
+    - Remote function (MCRIT database)
+    - Block-level similarity coloring
+  </Tab>
+</Tabs>
+
+## Configuration Options
+
+### Connection Settings
+
+```python
+# config.py
+
+# Server URL (required)
+MCRIT_SERVER = "http://localhost:8000"
+
+# Authentication (optional)
+MCRIT_APITOKEN = "your-secret-token"
+MCRIT_USERNAME = "analyst"
+
+# Timeout settings
+REQUEST_TIMEOUT = 30  # seconds
+JOB_POLL_INTERVAL = 2  # seconds
+MAX_JOB_WAIT = 300     # seconds
+```
+
+### Matching Preferences
+
+```python
+# Matching thresholds
+DEFAULT_MINHASH_THRESHOLD = 0.75
+DEFAULT_PICHASH_SIZE = 8
+MIN_BLOCK_SIZE = 5  # instructions
+
+# Result filtering
+EXCLUDE_LIBRARIES = True
+MAX_RESULTS_DISPLAY = 100
+MIN_CONFIDENCE = 0.7
+```
+
+## Usage Workflows
+
+<AccordionGroup>
+  <Accordion title="Analyze unknown malware">
+    **Scenario:** You have an unknown binary and want to identify similar code.
+
+    <Steps>
+      <Step title="Load sample in IDA">
+        Open the unknown binary in IDA Pro and wait for auto-analysis to complete.
+      </Step>
+
+      <Step title="Submit to MCRIT">
+        ```
+        MCRIT -> Submit Current Sample
+        Family: unknown
+        Version: [leave blank]
+        ```
+      </Step>
+
+      <Step title="Query for matches">
+        ```
+        MCRIT -> Match Current Sample
+        Wait for job completion...
+        ```
+      </Step>
+
+      <Step title="Review results">
+        Examine top matches:
+        - Family names indicate malware type
+        - High match percentages suggest variants
+        - Check matched function counts
+      </Step>
+
+      <Step title="Import labels">
+        ```
+        MCRIT -> Import Labels from Matches
+        Select top 3 matches
+        Import high-confidence labels
+        ```
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="Track malware evolution">
+    **Scenario:** You want to understand how a malware family evolved.
+
+    <Steps>
+      <Step title="Collect variants">
+        Gather multiple samples from the same family across different time periods.
+      </Step>
+
+      <Step title="Submit all samples">
+        For each variant:
+        ```
+        MCRIT -> Submit Current Sample
+        Family: emotet
+        Version: 2023.01, 2023.02, etc.
+        ```
+      </Step>
+
+      <Step title="Cross-match variants">
+        ```
+        MCRIT -> Cross Match Samples
+        Select all emotet samples
+        Run cross-matching job
+        ```
+      </Step>
+
+      <Step title="Analyze differences">
+        - Review unique functions per variant
+        - Identify added/removed functionality
+        - Track code reuse patterns
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="Identify library code">
+    **Scenario:** Separate malware-specific code from common libraries.
+
+    <Steps>
+      <Step title="Query current sample">
+        ```
+        MCRIT -> Match Current Sample
+        Enable: Exclude libraries = True
+        ```
+      </Step>
+
+      <Step title="Review library matches">
+        Functions with many library matches are likely legitimate code.
+      </Step>
+
+      <Step title="Focus on unique code">
+        Prioritize functions with:
+        - Few or no matches
+        - Matches only in malware families
+        - High uniqueness scores
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="Hunt for specific functionality">
+    **Scenario:** Find samples containing similar crypto/network code.
+
+    <Steps>
+      <Step title="Select function of interest">
+        Navigate to the crypto/network function in IDA.
+      </Step>
+
+      <Step title="Query function">
+        ```
+        MCRIT -> Query Current Function
+        MinHash threshold: 0.8 (high similarity)
+        ```
+      </Step>
+
+      <Step title="Query basic blocks">
+        For specific algorithm patterns:
+        ```
+        MCRIT -> Query PicBlockHash
+        Block size filter: > 10 instructions
+        ```
+      </Step>
+
+      <Step title="Collect matches">
+        Note sample IDs with matching functions.
+      </Step>
+
+      <Step title="Visualize remote graphs">
+        ```
+        Select match -> Show Remote Graph
+        Compare implementations
+        ```
+      </Step>
+    </Steps>
+  </Accordion>
+</AccordionGroup>
+
+## Advanced Features
+
+### Job Management
+
+Monitor and manage analysis jobs:
+
+```python
+# View active jobs
+MCRIT -> Job Queue -> View Active
+
+# Cancel running job
+MCRIT -> Job Queue -> Cancel Job
+
+# Retrieve cached results
+MCRIT -> Job Queue -> Get Previous Results
+```
+
+### Batch Operations
+
+Process multiple functions efficiently:
+
+```python
+# Select multiple functions in Functions window
+# Right-click -> MCRIT -> Batch Query Functions
+
+# Results aggregated by:
+# - Sample matches
+# - Function families
+# - Common patterns
+```
+
+### Custom Filters
+
+Create reusable filter configurations:
+
+```python
+# Save filter preset
+MCRIT -> Settings -> Save Filter Preset
+
+Name: High Confidence Malware
+MinHash: > 0.85
+Exclude libraries: True
+Min functions matched: 50
+
+# Apply preset
+MCRIT -> Settings -> Load Filter Preset
+```
+
+## Keyboard Shortcuts
+
+Optionally configure hotkeys for frequent operations:
+
+```python
+# In config.py
+KEYBINDINGS = {
+    "query_function": "Ctrl+Shift+M",
+    "match_sample": "Ctrl+Shift+S",
+    "import_labels": "Ctrl+Shift+L",
+    "show_graph": "Ctrl+Shift+G"
+}
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Plugin doesn't load">
+    **Symptoms:** Script runs but no menu appears
+
+    **Solutions:**
+    - Check Python version (IDA 7.x: Python 3.x required)
+    - Verify `config.py` exists and is valid
+    - Check IDA output window for error messages
+    - Ensure MCRIT client dependencies installed
+  </Accordion>
+
+  <Accordion title="Connection timeout">
+    **Error:** `Failed to connect to MCRIT server`
+
+    **Solutions:**
+    - Verify `MCRIT_SERVER` in config.py
+    - Test connection: `curl http://localhost:8000/status`
+    - Check network/firewall settings
+    - Increase `REQUEST_TIMEOUT` in config
+  </Accordion>
+
+  <Accordion title="No matches found">
+    **Issue:** Query returns empty results
+
+    **Possible causes:**
+    - Database is empty (submit samples first)
+    - Threshold too high (lower MinHash threshold)
+    - Function too small (increase minimum block size)
+    - Sample is unique (genuinely no matches)
+  </Accordion>
+
+  <Accordion title="Label import fails">
+    **Error:** Labels not applied to IDA database
+
+    **Solutions:**
+    - Ensure IDB is writable (not read-only)
+    - Check function addresses match
+    - Verify sufficient permissions
+    - Review IDA output window for conflicts
+  </Accordion>
+</AccordionGroup>
+
+## Performance Tips
+
+<CardGroup cols={2}>
+  <Card title="Cache Results" icon="database">
+    Enable result caching to avoid redundant queries for the same functions.
+  </Card>
+
+  <Card title="Adjust Thresholds" icon="sliders">
+    Lower thresholds increase recall but slow queries. Start high (0.8) and reduce if needed.
+  </Card>
+
+  <Card title="Filter Libraries" icon="filter">
+    Excluding library code significantly reduces result set size and improves relevance.
+  </Card>
+
+  <Card title="Batch Queries" icon="layer-group">
+    Use batch operations for multiple functions instead of individual queries.
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<Steps>
+  <Step title="Populate database first">
+    Build a comprehensive reference database before querying unknown samples.
+  </Step>
+
+  <Step title="Use consistent metadata">
+    Apply consistent family/version naming for better organization and filtering.
+  </Step>
+
+  <Step title="Verify before importing labels">
+    Review match quality before batch importing labels to avoid polluting your IDB.
+  </Step>
+
+  <Step title="Document configurations">
+    Save effective filter configurations for different analysis scenarios.
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Python Client" icon="python" href="/integrations/python-client">
+    Automate workflows with the Python API
+  </Card>
+  <Card title="CLI Tool" icon="terminal" href="/integrations/cli">
+    Batch process samples from command line
+  </Card>
+</CardGroup>

@@ -1,0 +1,155 @@
+---
+title: "Match Functions"
+description: "Get matching results for individual functions"
+---
+
+## Get Function vs Function Matches
+
+Compares two functions and returns their similarity score and matching details.
+
+<ParamField path="function_id" type="integer" required>
+  The ID of the first function
+</ParamField>
+
+<ParamField path="function_id_b" type="integer" required>
+  The ID of the second function to compare against
+</ParamField>
+
+### Request
+
+```bash
+curl -X GET "https://your-server.com/matches/function/123/456" \
+  -H "apitoken: YOUR_API_TOKEN"
+```
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request (`successful` or `failed`)
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Function matching result
+  
+  <Expandable title="data properties">
+    <ResponseField name="function_id" type="integer">
+      ID of the first function
+    </ResponseField>
+    <ResponseField name="function_id_b" type="integer">
+      ID of the second function
+    </ResponseField>
+    <ResponseField name="num_bytes" type="integer">
+      Size of the first function in bytes
+    </ResponseField>
+    <ResponseField name="num_bytes_b" type="integer">
+      Size of the second function in bytes
+    </ResponseField>
+    <ResponseField name="offset" type="integer">
+      Offset of the first function in its binary
+    </ResponseField>
+    <ResponseField name="offset_b" type="integer">
+      Offset of the second function in its binary
+    </ResponseField>
+    <ResponseField name="score" type="float">
+      Match score between the two functions (0-100)
+    </ResponseField>
+    <ResponseField name="is_minhash" type="boolean">
+      Whether the match was found via MinHash
+    </ResponseField>
+    <ResponseField name="is_pichash" type="boolean">
+      Whether the match was found via PicHash
+    </ResponseField>
+    <ResponseField name="is_library" type="boolean">
+      Whether either function is identified as library code
+    </ResponseField>
+    <ResponseField name="minhash_score" type="float">
+      MinHash similarity score (0-100)
+    </ResponseField>
+    <ResponseField name="pichash_match" type="boolean">
+      Whether PicHash values are identical
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "function_id": 123,
+    "function_id_b": 456,
+    "num_bytes": 256,
+    "num_bytes_b": 260,
+    "offset": 4096,
+    "offset_b": 8192,
+    "score": 95.5,
+    "is_minhash": true,
+    "is_pichash": false,
+    "is_library": false,
+    "minhash_score": 95.5,
+    "pichash_match": false
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "We don't have a sample with that id."
+  }
+}
+```
+
+Returns HTTP 404 if either function ID is not found in the database.
+
+## Get Function Matches
+
+Get all matches for a specific function against the database.
+
+<ParamField path="function_id" type="integer" required>
+  The ID of the function to match
+</ParamField>
+
+### Request
+
+```bash
+curl -X GET "https://your-server.com/matches/function/123" \
+  -H "apitoken: YOUR_API_TOKEN"
+```
+
+### Response
+
+Returns HTTP 501 Not Implemented. This endpoint is currently not implemented in the API.
+
+### Implementation Status
+
+This endpoint is planned but not yet available. For function matching, use:
+- Function vs Function endpoint for comparing two specific functions
+- Sample matching endpoints to get all function matches for a sample
+- Query endpoints to match functions from new binaries
+
+### Alternative Approaches
+
+#### Get Function Matches via Sample
+
+To get matches for functions within a sample:
+
+```bash
+curl -X GET "https://your-server.com/matches/sample/{sample_id}" \
+  -H "apitoken: YOUR_API_TOKEN"
+```
+
+The response includes a `functions` object with match details for all functions in the sample.
+
+#### Compare Specific Functions
+
+To compare two specific functions:
+
+```bash
+curl -X GET "https://your-server.com/matches/function/{function_id}/{function_id_b}" \
+  -H "apitoken: YOUR_API_TOKEN"
+```

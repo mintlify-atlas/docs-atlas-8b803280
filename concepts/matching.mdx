@@ -1,0 +1,437 @@
+---
+title: Function Matching
+description: How MCRIT combines PicHash and MinHash to find similar functions across binary samples
+---
+
+MCRIT's matching engine combines multiple hashing techniques to identify similar functions across binary samples. The system balances speed, accuracy, and scalability to handle millions of functions efficiently.
+
+## Overview
+
+Matching in MCRIT operates in several stages:
+
+1. **PicHash Matching**: Fast exact matching via hash table lookups
+2. **Candidate Generation**: LSH-based selection of potential matches using MinHash bands
+3. **MinHash Scoring**: Detailed similarity computation for candidates
+4. **Result Aggregation**: Combining and ranking matches across samples
+5. **Filtering & Reporting**: Applying thresholds and organizing results
+
+## Matcher Types
+
+MCRIT provides specialized matcher classes for different scenarios:
+
+### MatcherQuery
+Matches a single SMDA report (not in database) against all stored samples:
+- Used for one-off analysis of new binaries
+- Results not persisted in database
+- Functions created dynamically from SMDA report
+
+### MatcherSample
+Matches one stored sample against all others:
+- Sample must already be in database
+- Useful for retroactive analysis after adding new samples
+
+### MatcherVs
+Matches one sample against a specific set of samples:
+- Targeted comparison for focused analysis
+- Reduces computation by limiting search space
+
+### MatcherCross
+Matches all samples against each other:
+- Comprehensive database-wide comparison
+- Most computationally intensive
+- Generates complete similarity matrix
+
+Source: `mcrit/matchers/` directory
+
+## Matching Workflow
+
+All matchers follow a common workflow defined in `MatcherInterface`:
+
+```python
+def _getMatchesRoutine(self):
+    # Step 1: PicHash matching (exact)
+    pichash_matches = self._harmonizePicHashMatches(self._getPicHashMatches())
+    LOGGER.info("Calculated PicHash matches")
+    
+    all_minhash_matches = {}
+    # Step 2: MinHash matching (fuzzy) - only if bands are enabled
+    if self._band_matches_required > 0:
+        # Process in batches for large function sets
+        for start_index in range(0, len(self._function_entries), BATCH_SIZE):
+            # Create candidate groups from band matches
+            candidate_groups = self._createMinHashCandidateGroups(
+                start=start_index, end=start_index+BATCH_SIZE
+            )
+            
+            # Build cache of function data for candidates
+            matching_cache = self._createMatchingCache(candidate_groups)
+            
+            # Remove PicHash matches from candidates (optimization)
+            if self._worker._minhash_config.PICHASH_IMPLIES_MINHASH_MATCH:
+                candidate_groups = self.filter_pichashes_from_candidate_groups(
+                    matching_cache, candidate_groups, pichash_matches
+                )
+            
+            # Score remaining candidates
+            minhash_matches = self._harmonizeMinHashMatches(
+                self._sample_id, 
+                self._performMinHashMatching(candidate_groups, matching_cache)
+            )
+            all_minhash_matches.update(minhash_matches)
+    
+    # Step 3: Combine and format results
+    matching_report = self._craftResultDict(pichash_matches, all_minhash_matches)
+    return matching_report
+```
+
+Source: `mcrit/matchers/MatcherInterface.py:151-180`
+
+## Candidate Generation
+
+MinHash candidates are generated using Locality-Sensitive Hashing (LSH):
+
+```python
+def _createMinHashCandidateGroups(self, start=0, end=None):
+    if end is None:
+        end = len(self._function_entries)
+    
+    candidate_groups = {}
+    function_id_to_minhash = {}
+    
+    # Collect MinHashes for this batch
+    for function_entry in self._function_entries[start:end]:
+        function_id_to_minhash[function_entry.function_id] = 
+            function_entry.getMinHash(minhash_bits=self._worker._minhash_config.MINHASH_SIGNATURE_BITS)
+    
+    # Query storage for candidates based on band matches
+    candidate_groups = self._storage.getCandidatesForMinHashes(
+        function_id_to_minhash, 
+        band_matches_required=self._band_matches_required
+    )
+    
+    return candidate_groups
+```
+
+Source: `mcrit/matchers/MatcherInterface.py:108-123`
+
+### Band Matching
+
+Functions become candidates if they match in at least `band_matches_required` bands (default: 2):
+
+```python
+# In MinHashConfig
+BAND_MATCHES_REQUIRED = 2  # Minimum band matches for candidacy
+```
+
+<Note>
+Increasing `BAND_MATCHES_REQUIRED` reduces false positives but may miss some similar functions. Decreasing it finds more matches but increases computation time.
+</Note>
+
+## MinHash Scoring
+
+Candidates are scored by comparing MinHash signatures:
+
+```python
+def _performMinHashMatching(self, candidate_groups, cache):
+    matching_results = []
+    organized_results = defaultdict(lambda: (-1, -1.0))
+    
+    # Convert candidates to packed tuples for efficient processing
+    packed_tuples = self._unrollGroupsAsPackedTuples(cache, candidate_groups)
+    
+    # Calculate scores (parallelized by default)
+    calculation_function = functools.partial(
+        self._worker.minhasher.calculateScoresFromPackedTuples,
+        ignore_threshold=True,
+        minhash_threshold=self._minhash_threshold
+    )
+    
+    if self._worker._minhash_config.MINHASH_POOL_MATCHING:
+        with Pool(cpu_count()) as pool:
+            for pool_result in pool.imap_unordered(calculation_function, packed_tuples):
+                for sample_id_a, function_id_a, sample_id_b, function_id_b, score in pool_result:
+                    if score > self._worker.config.MINHASH_CONFIG.MINHASH_MATCHING_THRESHOLD:
+                        key = (sample_id_a, function_id_a, sample_id_b)
+                        new_value = (function_id_b, score)
+                        # Keep best match per sample
+                        organized_results[key] = max([organized_results[key], new_value], 
+                                                     key=lambda x: x[1])
+    
+    matching_results = [k + v for k, v in organized_results.items()]
+    return matching_results
+```
+
+Source: `mcrit/matchers/MatcherInterface.py:183-237`
+
+### Batched Processing
+
+For large datasets, matching is divided into batches:
+
+```python
+# In MinHashConfig
+MINHASH_MATCHING_FUNCTION_BATCH_SIZE: int = 10000  # Functions per batch
+MINHASH_MATCHING_CANDIDATE_WORKPACK_SIZE: int = 20000  # Candidates per work unit
+```
+
+This prevents memory exhaustion when matching millions of functions.
+
+## Result Aggregation
+
+Matches are aggregated at multiple levels:
+
+### Function-Level Matches
+
+Each function gets a list of matching functions with scores:
+
+```python
+{
+    "fid": 12345,
+    "num_bytes": 256,
+    "num_instructions": 42,
+    "offset": 0x401000,
+    "matches": [
+        (family_id, sample_id, function_id, score, flags),
+        # flags encode: IS_PICHASH_FLAG | IS_MINHASH_FLAG | IS_LIBRARY_FLAG
+    ]
+}
+```
+
+### Sample-Level Aggregation
+
+Matches are summarized per sample with multiple scoring methods:
+
+```python
+def _aggregateMatchSampleSummary(self, match_report, own_sample_info, num_library_bytes):
+    # Calculate matchable bytes (functions meeting size threshold)
+    own_sample_num_matchable_bytes = sum(
+        function_entry.binweight 
+        for function_entry in own_sample_function_entries
+        if function_entry.num_instructions >= MINHASH_FN_MIN_INS
+    )
+    
+    # Compute family adjustment (penalize functions matching many families)
+    family_adjustment = self._get_family_adjustment(match_report)
+    
+    for foreign_sample_id in matches_per_sample:
+        current_matched["bytes"]["unweighted"] += function_num_bytes[own_function_id]
+        current_matched["bytes"]["score_weighted"] += 
+            unweighted_inc * match_max / 100.0
+        current_matched["bytes"]["frequency_weighted"] += 
+            score_weighted_inc / family_adjustment[own_function_id]
+        
+        # Calculate percentages against matchable bytes
+        current_matched["percent"]["unweighted"] = 
+            100.0 * current_matched["bytes"]["unweighted"] / own_sample_num_matchable_bytes
+```
+
+Source: `mcrit/matchers/MatcherInterface.py:443-532`
+
+### Scoring Methods
+
+**Unweighted**: Simple byte coverage
+- Sum of matched function sizes
+- Does not consider match quality
+
+**Score Weighted**: Adjusted by match score
+- `matched_bytes × (score / 100)`
+- 50% match contributes half the bytes
+
+**Frequency Weighted**: Adjusted by family diversity
+- Penalizes ubiquitous code (e.g., common libraries)
+- Formula: `score_weighted / family_count_factor`
+
+```python
+def _get_family_adjustment(self, match_report):
+    adjustments = {}
+    for fid, function_data in match_report.items():
+        families = {match[0] for match in function_data["matches"]}
+        # More families = higher penalty
+        family_adjustment_value = 1 if len(families) < 3 else 1 + int(math.log(len(families), 2))
+        adjustments[fid] = family_adjustment_value
+    return adjustments
+```
+
+Source: `mcrit/matchers/MatcherInterface.py:435-441`
+
+<Tip>
+**Frequency-weighted scores** are most useful for malware analysis, as they de-emphasize shared library code and highlight family-specific similarities.
+</Tip>
+
+## Match Filtering
+
+Several mechanisms filter and refine matches:
+
+### Threshold Filtering
+
+```python
+# In MinHashConfig
+MINHASH_MATCHING_THRESHOLD: int = 50  # Minimum score to report (0-100)
+```
+
+Only matches above this threshold are included in results.
+
+### Self-Match Exclusion
+
+```python
+def __init__(self, worker, exclude_self_matches=False, ...):
+    self._exclude_self_matches = exclude_self_matches
+
+# In matching logic:
+if function_id_a == function_id_b:
+    continue  # Skip self-comparisons
+```
+
+### Library Filtering
+
+Functions matched to libraries are flagged:
+
+```python
+has_libinfo = self._storage.getLibraryInfoForSampleId(foreign_sample_id) is not None
+
+flags = (
+    is_pichash_match * MatcherFlags.IS_PICHASH_FLAG +
+    is_minhash_match * MatcherFlags.IS_MINHASH_FLAG +
+    has_libinfo * MatcherFlags.IS_LIBRARY_FLAG
+)
+```
+
+Source: `mcrit/matchers/MatcherInterface.py:394-398`
+
+This allows downstream filtering of library matches:
+
+```python
+# Non-library percentages available separately
+current_matched["percent"]["nonlib_unweighted"]
+current_matched["percent"]["nonlib_score_weighted"]
+current_matched["percent"]["nonlib_frequency_weighted"]
+```
+
+## Match Flags
+
+Each match carries bitflags indicating its source:
+
+```python
+# In MatcherFlags.py
+IS_PICHASH_FLAG = 0b001  # Match found via PicHash
+IS_MINHASH_FLAG = 0b010  # Match found via MinHash
+IS_LIBRARY_FLAG = 0b100  # Match is to library code
+```
+
+Source: `mcrit/matchers/MatcherFlags.py`
+
+Extracting flags:
+```python
+is_pichash_match = flags & MatcherFlags.IS_PICHASH_FLAG
+is_minhash_match = flags & MatcherFlags.IS_MINHASH_FLAG
+is_library = flags & MatcherFlags.IS_LIBRARY_FLAG
+```
+
+## Performance Optimization
+
+### Parallel Processing
+
+```python
+# In MinHashConfig
+MINHASH_POOL_INDEXING: bool = True   # Parallelize hash generation
+MINHASH_POOL_MATCHING: bool = True   # Parallelize candidate scoring
+```
+
+Both use Python's `multiprocessing.Pool` with `cpu_count()` workers.
+
+### Matching Cache
+
+A temporary cache avoids repeated database queries during matching:
+
+```python
+def _createMatchingCache(self, candidate_groups):
+    cache_function_ids = set()
+    for candidate_key, candidate_functions in candidate_groups.items():
+        cache_function_ids.add(candidate_key)
+        cache_function_ids.update(candidate_functions)
+    
+    return self._storage.createMatchingCache(cache_function_ids)
+```
+
+Source: `mcrit/matchers/MatcherInterface.py:125-134`
+
+The cache provides fast access to:
+- MinHash signatures
+- Sample IDs for functions
+- Function metadata
+
+### PicHash Pre-filtering
+
+PicHash matches are removed from MinHash candidate pool:
+
+```python
+if self._worker._minhash_config.PICHASH_IMPLIES_MINHASH_MATCH:
+    candidate_groups = self.filter_pichashes_from_candidate_groups(
+        matching_cache, candidate_groups, pichash_matches
+    )
+```
+
+This avoids redundant MinHash computation for exact matches.
+
+## Result Format
+
+The final matching result is structured as:
+
+```python
+{
+    "info": {
+        "job": {"duration": 45.2, "timestamp": "2026-03-03T...", "parameters": "..."},
+        "sample": {...},  # Sample metadata
+        "type": "query"   # Matcher type
+    },
+    "matches": {
+        "aggregation": {
+            "minhash": {"num_own_functions_matched": 150, "bytes_matched": 45000, ...},
+            "pichash": {"num_own_functions_matched": 30, "bytes_matched": 8000, ...}
+        },
+        "functions": [  # Per-function matches
+            {"fid": 1, "matches": [...], "num_bytes": 256, ...},
+            ...
+        ],
+        "samples": [  # Per-sample aggregation
+            {
+                "sample_id": 42,
+                "family": "emotet",
+                "matched": {
+                    "functions": {"combined": 50, "minhashes": 45, "pichashes": 10},
+                    "bytes": {"unweighted": 12000, "score_weighted": 9500, ...},
+                    "percent": {"unweighted": 45.2, "frequency_weighted": 38.1, ...}
+                }
+            },
+            ...
+        ]
+    }
+}
+```
+
+Source: `mcrit/matchers/MatcherInterface.py:585-601`
+
+## Configuration Summary
+
+Key matching configuration parameters:
+
+```python
+# Matching thresholds
+MINHASH_MATCHING_THRESHOLD: int = 50
+BAND_MATCHES_REQUIRED: int = 2
+PICHASH_SIZE: int = 10
+
+# Performance tuning
+MINHASH_POOL_MATCHING: bool = True
+MINHASH_MATCHING_FUNCTION_BATCH_SIZE: int = 10000
+MINHASH_MATCHING_CANDIDATE_WORKPACK_SIZE: int = 20000
+
+# Integration
+PICHASH_IMPLIES_MINHASH_MATCH: bool = True
+```
+
+## Related Concepts
+
+- [MinHash](/concepts/minhash) - Fuzzy similarity algorithm
+- [PicHash](/concepts/pichash) - Exact matching mechanism
+- [Storage](/concepts/storage) - How matches are indexed and retrieved
+- [Shinglers](/concepts/shinglers) - Feature extraction for matching

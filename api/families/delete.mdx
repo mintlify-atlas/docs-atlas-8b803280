@@ -1,0 +1,138 @@
+---
+title: "Delete Family"
+description: "Remove a family from the database with optional sample retention"
+---
+
+## Endpoint
+
+```
+DELETE /families/{family_id}
+```
+
+Delete a family from the MCRIT database. You can optionally choose to keep the samples that belong to this family or delete them as well.
+
+## Path Parameters
+
+<ParamField path="family_id" type="integer" required>
+  The unique identifier of the family to delete.
+</ParamField>
+
+## Query Parameters
+
+<ParamField query="keep_samples" type="boolean" default="false">
+  Whether to keep the samples when deleting the family. Set to `"true"` to preserve samples (they will be reassigned), or `"false"` to delete them along with the family.
+</ParamField>
+
+## Response
+
+### Success Response (202 Accepted)
+
+<ResponseField name="status" type="string" required>
+  Status of the request. Returns `"successful"` when the family is successfully deleted.
+</ResponseField>
+
+<ResponseField name="data" type="boolean" required>
+  Returns `true` to indicate successful deletion.
+</ResponseField>
+
+### Error Response (404 Not Found)
+
+Returned when the specified family ID does not exist.
+
+<ResponseField name="status" type="string" required>
+  Status of the request. Returns `"failed"` on error.
+</ResponseField>
+
+<ResponseField name="data" type="object" required>
+  Error details.
+  
+  <Expandable title="Error Object">
+    <ResponseField name="message" type="string" required>
+      Error message: "We don't have a family with that id."
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Error Response (410 Gone)
+
+Returned when the deletion operation fails for other reasons.
+
+<ResponseField name="status" type="string" required>
+  Status of the request. Returns `"failed"` on error.
+</ResponseField>
+
+<ResponseField name="data" type="object" required>
+  Error details.
+  
+  <Expandable title="Error Object">
+    <ResponseField name="message" type="string" required>
+      Error message: "Failed to delete family."
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Examples
+
+### Delete family and its samples
+
+```bash
+curl -X DELETE "http://localhost:8000/families/1"
+```
+
+<Expandable title="Response (202)">
+```json
+{
+  "status": "successful",
+  "data": true
+}
+```
+</Expandable>
+
+### Delete family but keep samples
+
+```bash
+curl -X DELETE "http://localhost:8000/families/2?keep_samples=true"
+```
+
+<Expandable title="Response (202)">
+```json
+{
+  "status": "successful",
+  "data": true
+}
+```
+</Expandable>
+
+### Error: Family not found
+
+```bash
+curl -X DELETE "http://localhost:8000/families/9999"
+```
+
+<Expandable title="Response (404)">
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "We don't have a family with that id."
+  }
+}
+```
+</Expandable>
+
+### Error: Deletion failed
+
+```bash
+curl -X DELETE "http://localhost:8000/families/1"
+```
+
+<Expandable title="Response (410)">
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "Failed to delete family."
+  }
+}
+```
+</Expandable>

@@ -1,0 +1,310 @@
+---
+title: PicHash
+description: Position-independent code hashing for exact function matching in MCRIT
+---
+
+PicHash (Position-Independent Code Hash) is MCRIT's mechanism for exact matching of functions based on their position-independent code representation. Unlike MinHash which provides fuzzy similarity, PicHash identifies identical or near-identical code regardless of where it's loaded in memory.
+
+## Overview
+
+PicHash complements MinHash by handling scenarios where exact or near-exact matches are needed:
+
+- **Library function detection**: Identifying statically linked library code
+- **Code reuse**: Finding exact copies of functions across samples
+- **Small functions**: Efficiently matching functions too small for MinHash
+- **High-confidence matches**: Providing 100% match scores for identical code
+
+## What is Position-Independent Code?
+
+Position-independent code (PIC) is code that executes correctly regardless of its absolute address in memory. In reverse engineering, we achieve this by:
+
+1. **Normalizing addresses**: Replace absolute addresses with relative offsets or generic placeholders
+2. **Abstracting registers**: Use generic register representations
+3. **Standardizing immediates**: Normalize immediate values where appropriate
+
+This normalization is performed by SMDA (Smart Disassembly Annotation) before MCRIT processes the code.
+
+## PicHash Generation
+
+PicHash values are generated during SMDA disassembly and stored in function entries:
+
+```python
+class FunctionEntry(object):
+    # ...
+    pichash: int
+    picblockhashes: list
+    
+    def __init__(self, sample_entry, smda_function, function_id, minhash=None):
+        # ...
+        if smda_function:
+            self.pichash = smda_function.pic_hash
+            self.picblockhashes = []
+```
+
+Source: `mcrit/storage/FunctionEntry.py:34-62`
+
+The `pic_hash` is computed by SMDA during function analysis and represents a hash of the position-independent code representation.
+
+<Info>
+PicHash values are calculated by SMDA, not MCRIT. MCRIT indexes and queries these pre-computed hashes for matching.
+</Info>
+
+## PicHash vs MinHash
+
+| Aspect | PicHash | MinHash |
+|--------|---------|----------|
+| **Match Type** | Exact | Fuzzy (similarity) |
+| **Score** | 100% or no match | 0-100% similarity |
+| **Collision Resistance** | High (cryptographic hash) | Intentional collisions |
+| **Small Functions** | Excellent | Poor (needs ≥10 instructions) |
+| **Variants** | Misses minor changes | Tolerates modifications |
+| **Speed** | Very fast (hash lookup) | Fast (LSH candidates) |
+| **Use Case** | Library detection, exact copies | Similar code, refactored versions |
+
+## PicHash Matching
+
+PicHash matching operates through indexed lookups:
+
+```python
+def _getPicHashMatches(self) -> Dict[int, Set[Tuple[int, int]]]:
+    """Get PicHash matches for function entries
+    
+    Returns:
+        Dict mapping pichash -> Set of (sample_id, function_id) tuples
+    """
+    function_ids = [entry.function_id for entry in self._function_entries]
+    return self._storage.getPicHashMatchesByFunctionIds(function_ids)
+```
+
+The storage layer maintains an index:
+```python
+def getMatchesForPicHash(self, pichash: int) -> Set[Tuple[int, int, int]]:
+    """Get all (family_id, sample_id, function_id) tuples for a given PicHash
+    
+    Args:
+        pichash: the pichash to look up
+        
+    Returns:
+        a set of (family_id, sample_id, function_id) tuples with the given pichash
+    """
+```
+
+Source: `mcrit/storage/StorageInterface.py:570-579`
+
+### Match Harmonization
+
+PicHash matches are processed into a standardized format:
+
+```python
+def _harmonizePicHashMatches(self, pichash_matches):
+    pichash_match_mapping = {}
+    sample_function_id_to_size = {
+        entry.function_id: entry.num_instructions 
+        for entry in self._function_entries
+    }
+    
+    for _, pichash_tuples in pichash_matches.items():
+        current_own_function_ids = []
+        current_foreign_function_ids = []
+        function_size = 0
+        
+        for pichash_tuple in pichash_tuples:
+            bh_family_id, bh_sample_id, bh_function_id = pichash_tuple
+            if bh_function_id in sample_function_id_to_size:
+                current_own_function_ids.append(bh_function_id)
+                function_size = sample_function_id_to_size[bh_function_id]
+            else:
+                current_foreign_function_ids.append(bh_function_id)
+        
+        # Only match if function meets size threshold
+        if function_size < self._pichash_size:
+            continue
+            
+        # Create match entries with 100% score
+        if len(pichash_tuples) > 1:
+            for own_function_id in current_own_function_ids:
+                for foreign_function_id in current_foreign_function_ids:
+                    foreign_sample_id = cached_function_id_to_sample_id[foreign_function_id]
+                    pichash_match_mapping[(own_function_id, foreign_sample_id, foreign_function_id)] = 
+                        (100, True, False)  # score=100, is_pichash=True, is_minhash=False
+```
+
+Source: `mcrit/matchers/MatcherInterface.py:274-309`
+
+## Size Threshold
+
+PicHash matching includes a configurable size threshold to avoid matching trivial functions:
+
+```python
+# In MinHashConfig
+PICHASH_SIZE: int = 10  # minimum function size for PicHash matching
+```
+
+Functions with fewer than 10 instructions (by default) are excluded from PicHash matching, even if they share the same hash.
+
+<Note>
+The `PICHASH_SIZE` threshold prevents matching of very small functions like single-instruction stubs that might coincidentally have the same PicHash.
+</Note>
+
+## PicHash and MinHash Integration
+
+MCRIT combines both hashing methods for comprehensive matching:
+
+```python
+# Configuration option
+PICHASH_IMPLIES_MINHASH_MATCH: bool = True
+```
+
+When enabled (default), PicHash matches are treated as implied MinHash matches:
+
+```python
+if self._worker._minhash_config.PICHASH_IMPLIES_MINHASH_MATCH:
+    for key, new_entry in pichash_matches.items():
+        if key not in minhash_matches:
+            minhash_matches[key] = (100.0, 0, 1)  # Treat as MinHash match
+```
+
+Source: `mcrit/matchers/MatcherInterface.py:564-567`
+
+This optimization reduces computational overhead:
+1. PicHash matches are found first (fast hash lookup)
+2. These matches are removed from MinHash candidate pool
+3. MinHash only processes remaining candidates
+
+### Filtering PicHash from Candidates
+
+```python
+def filter_pichashes_from_candidate_groups(self, matching_cache, 
+                                           candidate_groups, pichash_matches):
+    finished_tuples = set()
+    for pichash_match in pichash_matches:
+        own_fid, foreign_sid, foreign_fid = pichash_match
+        if own_fid in candidate_groups:
+            # Remove all candidates from the same sample
+            if (own_fid, foreign_sid) not in finished_tuples:
+                if matching_cache.isSampleId(foreign_sid):
+                    pichash_match_sid_fids = matching_cache.getFunctionIdsBySampleId(foreign_sid)
+                    candidate_groups[own_fid].difference_update(pichash_match_sid_fids)
+                    finished_tuples.add((own_fid, foreign_sid))
+    return candidate_groups
+```
+
+Source: `mcrit/matchers/MatcherInterface.py:138-149`
+
+## PicBlockHash
+
+MCRIT also supports **PicBlockHash** for basic block-level matching:
+
+```python
+class FunctionEntry(object):
+    picblockhashes: list  # List of hashes for individual basic blocks
+```
+
+This enables:
+- **Partial function matching**: Finding shared code blocks between different functions
+- **Code fragment search**: Identifying specific instruction sequences
+- **Unique block isolation**: Finding code unique to specific samples
+
+```python
+def getMatchesForPicBlockHash(self, picblockhash: int) -> Set[Tuple[int, int, int, int]]:
+    """Get all (family_id, sample_id, function_id, offset) tuples for a PicBlockHash
+    
+    Args:
+        picblockhash: the picblockhash to look up
+        
+    Returns:
+        a set of (family_id, sample_id, function_id, offset) tuples
+    """
+```
+
+Source: `mcrit/storage/StorageInterface.py:582-591`
+
+## Recalculating PicHashes
+
+When SMDA is updated with improved normalization, PicHashes can be recalculated:
+
+```python
+def recalculateAllPicHashes(self) -> int:
+    """Iterate across all SampleEntries and check if the SMDA version 
+    is older than the one currently available. If yes, recalculate PicHash
+    using the new SMDA version and rebuild the PicHashIndex.
+    
+    Returns:
+        the number of pichashes recalculated
+    """
+```
+
+Source: `mcrit/storage/StorageInterface.py:665-672`
+
+This ensures consistency when SMDA improves its position-independent code generation.
+
+## Use Cases
+
+### Library Detection
+
+PicHash excels at identifying statically linked libraries:
+- Hash all functions from known libraries (e.g., OpenSSL, zlib)
+- Query samples against the library index
+- Functions with PicHash matches are marked as library code
+
+```python
+def getLibraryInfoForSampleId(self, sample_id: int) -> Optional[Dict[str, str]]:
+    """Return family_name and version of sample if it is a library
+    
+    Returns:
+        dict with 'family' and 'version' if sample is a library, None otherwise
+    """
+```
+
+Source: `mcrit/storage/StorageInterface.py:298-308`
+
+### Code Reuse Detection
+
+Identify exact function copies across different malware families:
+1. Function appears in multiple samples with same PicHash
+2. High confidence (100% match) that code is reused
+3. Track code propagation across campaigns
+
+### Small Function Matching
+
+For functions below MinHash threshold (< 10 instructions):
+- PicHash provides the only matching mechanism
+- Examples: small utility functions, getters/setters, jump tables
+- Still achieves high precision for exact matches
+
+## Configuration
+
+PicHash behavior is controlled through `MinHashConfig`:
+
+```python
+# Minimum function size for PicHash matching
+PICHASH_SIZE: int = 10
+
+# Treat PicHash matches as implied MinHash matches
+PICHASH_IMPLIES_MINHASH_MATCH: bool = True
+```
+
+Source: `mcrit/config/MinHashConfig.py:32-35`
+
+<Tip>
+If you're primarily interested in finding similar (not identical) code, you can disable `PICHASH_IMPLIES_MINHASH_MATCH` to see both PicHash and independent MinHash scores.
+</Tip>
+
+## Limitations
+
+**Exact Match Requirement**: PicHash won't match functions with even minor modifications:
+- Reordered instructions within blocks
+- Different optimization levels
+- Manual obfuscation
+
+For these cases, MinHash is more appropriate.
+
+**Collision Possibility**: While rare, hash collisions are theoretically possible. Very different functions could share the same PicHash.
+
+**SMDA Dependency**: PicHash quality depends on SMDA's normalization. Updates to SMDA may change PicHash values, requiring recalculation.
+
+## Related Concepts
+
+- [MinHash](/concepts/minhash) - Fuzzy similarity hashing
+- [Matching](/concepts/matching) - How PicHash and MinHash are combined
+- [Storage](/concepts/storage) - PicHash indexing and retrieval

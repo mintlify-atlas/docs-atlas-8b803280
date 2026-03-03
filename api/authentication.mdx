@@ -1,0 +1,174 @@
+---
+title: Authentication
+description: Learn how to authenticate requests to the MCRIT REST API using API tokens
+---
+
+## Overview
+
+MCRIT supports optional API token authentication to secure access to the REST API. When authentication is enabled, all requests must include a valid API token in the request headers.
+
+## Authentication Configuration
+
+Authentication is controlled by the `AUTH_TOKEN` configuration parameter in `McritConfig`:
+
+- **Disabled**: When `AUTH_TOKEN` is `None` or an empty string `""`, authentication is disabled and all requests are allowed
+- **Enabled**: When `AUTH_TOKEN` is set to a non-empty string, authentication is enforced for all endpoints
+
+Default configuration (from `mcrit/config/McritConfig.py:19`):
+
+```python
+AUTH_TOKEN = ""
+```
+
+## Making Authenticated Requests
+
+When authentication is enabled, include your API token in the request header:
+
+<ParamField header="apitoken" type="string" required>
+  Your API authentication token. Must match the token configured on the server.
+</ParamField>
+
+### Example Requests
+
+<CodeGroup>
+
+```bash cURL
+curl -H "apitoken: your_token_here" \
+  http://localhost:8000/status
+```
+
+```python Python
+import requests
+
+headers = {
+    "apitoken": "your_token_here"
+}
+
+response = requests.get(
+    "http://localhost:8000/status",
+    headers=headers
+)
+```
+
+```javascript JavaScript
+fetch('http://localhost:8000/status', {
+  headers: {
+    'apitoken': 'your_token_here'
+  }
+})
+.then(response => response.json())
+.then(data => console.log(data));
+```
+
+</CodeGroup>
+
+## Authentication Errors
+
+### Missing API Token
+
+When authentication is enabled but no token is provided:
+
+**Request:**
+```bash
+curl http://localhost:8000/status
+```
+
+**Response:**
+```json
+{
+  "title": "API token required",
+  "description": "Please provide an auth token as part of the request."
+}
+```
+
+**HTTP Status:** `401 Unauthorized`
+
+### Invalid API Token
+
+When the provided token doesn't match the server configuration:
+
+**Request:**
+```bash
+curl -H "apitoken: wrong_token" \
+  http://localhost:8000/status
+```
+
+**Response:**
+```json
+{
+  "title": "Authentication required",
+  "description": "The provided API token is not valid. Please request a new token and try again."
+}
+```
+
+**HTTP Status:** `401 Unauthorized`
+
+## Authentication Middleware
+
+Authentication is implemented using Falcon middleware (from `application_routes.py:25-53`). The `AuthMiddleware` class:
+
+1. Intercepts all incoming requests via `process_request()`
+2. Checks if authentication is enabled by verifying `McritConfig.AUTH_TOKEN`
+3. Extracts the `apitoken` header from the request
+4. Validates the token against the configured value
+5. Raises `falcon.HTTPUnauthorized` if authentication fails
+
+## Token Validation Logic
+
+The token validation follows this logic:
+
+```python
+def _token_is_valid(self, token):
+    if McritConfig.AUTH_TOKEN in [None, ""]:
+        return True
+    return token == McritConfig.AUTH_TOKEN
+```
+
+- If `AUTH_TOKEN` is not configured, all tokens are considered valid
+- Otherwise, the provided token must exactly match the configured token
+
+## Security Best Practices
+
+<Warning>
+  API tokens are transmitted in plain text headers. Always use HTTPS in production environments to protect tokens from interception.
+</Warning>
+
+<Tip>
+  - Store your API token securely (e.g., environment variables, secrets management)
+  - Never commit tokens to version control
+  - Rotate tokens periodically
+  - Use different tokens for different environments (development, staging, production)
+</Tip>
+
+## User Tracking
+
+In addition to the `apitoken` header, you can optionally include a `username` header for tracking purposes:
+
+<ParamField header="username" type="string" default="anonymous">
+  Username for logging and audit trails. Defaults to "anonymous" if not provided.
+</ParamField>
+
+**Example:**
+```bash
+curl -H "apitoken: your_token_here" \
+     -H "username: john.doe" \
+     http://localhost:8000/status
+```
+
+The username is logged with all operations for audit and tracking purposes (see `utils.py:8-13`).
+
+## Unauthenticated Environments
+
+If you're running MCRIT in a trusted environment (e.g., internal network, localhost development), you can disable authentication by keeping `AUTH_TOKEN` empty:
+
+```python
+# In your configuration
+AUTH_TOKEN = ""
+```
+
+With authentication disabled, no `apitoken` header is required:
+
+```bash
+# Works without authentication when AUTH_TOKEN is empty
+curl http://localhost:8000/status
+```

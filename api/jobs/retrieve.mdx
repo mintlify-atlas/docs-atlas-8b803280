@@ -1,0 +1,259 @@
+---
+title: 'Retrieve Job'
+description: 'Get detailed information about a specific job'
+---
+
+## GET /jobs/{job_id}
+
+Retrieve detailed information about a specific job by its ID.
+
+### Path Parameters
+
+<ParamField path="job_id" type="string" required>
+  Job ID - must be a 24-character hexadecimal string
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request. Returns `"successful"` on success or `"failed"` on error.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Job object containing all job details.
+  
+  <Expandable title="Job Object Properties">
+    <ResponseField name="_id" type="string">
+      Job ID (24-character hexadecimal string)
+    </ResponseField>
+    
+    <ResponseField name="number" type="integer">
+      Sequential job number in the queue
+    </ResponseField>
+    
+    <ResponseField name="payload" type="object">
+      Job payload containing method and parameters
+      
+      <Expandable title="Payload Properties">
+        <ResponseField name="method" type="string">
+          The method being executed by this job. Examples:
+          - `getMatchesForSample` - Find matches for a sample
+          - `getMatchesForSampleVs` - Compare two samples
+          - `getUniqueBlocks` - Analyze unique blocks
+          - `addBinarySample` - Add a new binary sample
+        </ResponseField>
+        
+        <ResponseField name="params" type="string">
+          JSON string containing method parameters (indexed and named)
+        </ResponseField>
+        
+        <ResponseField name="descriptor" type="string">
+          Job descriptor used for caching and identification
+        </ResponseField>
+        
+        <ResponseField name="file_params" type="string">
+          JSON string containing GridFS file references for large parameters
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="priority" type="integer">
+      Job priority level (higher values = higher priority)
+    </ResponseField>
+    
+    <ResponseField name="attempts_left" type="integer">
+      Number of retry attempts remaining. A value of 0 indicates a failed job.
+    </ResponseField>
+    
+    <ResponseField name="created_at" type="string">
+      ISO 8601 timestamp when the job was created
+    </ResponseField>
+    
+    <ResponseField name="started_at" type="string">
+      ISO 8601 timestamp when the job started execution (null if not started)
+    </ResponseField>
+    
+    <ResponseField name="finished_at" type="string">
+      ISO 8601 timestamp when the job finished (null if not finished)
+    </ResponseField>
+    
+    <ResponseField name="locked_by" type="string">
+      Worker ID that locked this job for processing (null if not locked)
+    </ResponseField>
+    
+    <ResponseField name="locked_at" type="string">
+      ISO 8601 timestamp when the job was locked (null if not locked)
+    </ResponseField>
+    
+    <ResponseField name="progress" type="number">
+      Job progress from 0 to 1, where 1 indicates completion
+    </ResponseField>
+    
+    <ResponseField name="result" type="string">
+      GridFS ID of the result object (null if not finished)
+    </ResponseField>
+    
+    <ResponseField name="last_error" type="string">
+      Error message from last failed attempt (null if no errors)
+    </ResponseField>
+    
+    <ResponseField name="terminated" type="boolean">
+      Whether the job has been manually terminated
+    </ResponseField>
+    
+    <ResponseField name="unfinished_dependencies" type="array">
+      Array of job IDs that must complete before this job can run
+    </ResponseField>
+    
+    <ResponseField name="all_dependencies" type="array">
+      Complete array of all job IDs that this job depends on
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Job Lifecycle
+
+Jobs in MCRIT progress through the following states:
+
+1. **Created** - Job is created with `created_at` timestamp
+2. **Queued** - Job is waiting for dependencies (if any) to complete
+3. **Locked** - Job is locked by a worker (`locked_by` and `locked_at` are set)
+4. **Processing** - Job is being executed (`started_at` is set, `progress` updates)
+5. **Finished** - Job completes successfully (`finished_at` is set, `progress` = 1, `result` contains GridFS ID)
+6. **Failed** - Job fails after retries (`attempts_left` = 0, `last_error` contains error message)
+7. **Terminated** - Job is manually terminated (`terminated` = true)
+
+### Error Responses
+
+<ResponseField name="status" type="string">
+  Returns `"failed"` when the job ID is invalid
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <Expandable title="Error Data">
+    <ResponseField name="message" type="string">
+      Error message explaining why the request failed
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-mcrit-instance.com/jobs/507f1f77bcf86cd799439011" \
+  -H "apitoken: your-api-token"
+```
+
+### Example Response (Successful Job)
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "_id": "507f1f77bcf86cd799439011",
+    "number": 42,
+    "payload": {
+      "method": "getMatchesForSample",
+      "params": "{\"0\": 1}",
+      "descriptor": "sample_1_matching",
+      "file_params": "{}"
+    },
+    "priority": 0,
+    "attempts_left": 1,
+    "created_at": "2023-01-12T10:00:00.000000",
+    "started_at": "2023-01-12T10:00:01.000000",
+    "finished_at": "2023-01-12T10:01:17.468680",
+    "locked_by": "worker-1",
+    "locked_at": "2023-01-12T10:00:01.000000",
+    "progress": 1,
+    "result": "607f1f77bcf86cd799439099",
+    "last_error": null,
+    "terminated": false,
+    "unfinished_dependencies": [],
+    "all_dependencies": []
+  }
+}
+```
+
+### Example Response (Failed Job)
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "_id": "507f1f77bcf86cd799439012",
+    "number": 43,
+    "payload": {
+      "method": "getMatchesForSample",
+      "params": "{\"0\": 999}",
+      "descriptor": "sample_999_matching"
+    },
+    "priority": 0,
+    "attempts_left": 0,
+    "created_at": "2023-01-12T11:00:00.000000",
+    "started_at": "2023-01-12T11:00:01.000000",
+    "finished_at": null,
+    "locked_by": null,
+    "locked_at": null,
+    "progress": 0.5,
+    "result": null,
+    "last_error": "Sample with ID 999 not found",
+    "terminated": false,
+    "unfinished_dependencies": [],
+    "all_dependencies": []
+  }
+}
+```
+
+### Example Response (Invalid Job ID)
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "Valid JobIDs are hexstrings with 24 characters."
+  }
+}
+```
+
+## DELETE /jobs/{job_id}
+
+Delete a specific job and its associated result data.
+
+### Path Parameters
+
+<ParamField path="job_id" type="string" required>
+  Job ID - must be a 24-character hexadecimal string
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request. Returns `"successful"` on success or `"failed"` on error.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <Expandable title="Deletion Result">
+    <ResponseField name="num_deleted" type="integer">
+      Number of jobs deleted (1 if successful, 0 if job not found)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X DELETE "https://your-mcrit-instance.com/jobs/507f1f77bcf86cd799439011" \
+  -H "apitoken: your-api-token"
+```
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "num_deleted": 1
+  }
+}
+```

@@ -1,0 +1,172 @@
+---
+title: Function Labels
+description: Understand function labels and how they're used to annotate and categorize functions in MCRIT
+---
+
+## Overview
+
+Function labels allow analysts to annotate and categorize functions with custom tags. Labels are useful for:
+
+- Identifying function purposes (e.g., "encryption", "network_io", "persistence")
+- Marking functions of interest during malware analysis
+- Tracking analyst observations and conclusions
+- Filtering and searching functions by behavior or characteristics
+
+## FunctionLabelEntry Structure
+
+Each function can have multiple labels, and each label contains the following information:
+
+<ResponseField name="function_label" type="string" required>
+  The label text assigned to the function. This is a free-form string that can describe the function's purpose, behavior, or any other characteristic.
+  
+  **Examples:** "decryption", "anti_debug", "c2_communication", "credential_theft"
+</ResponseField>
+
+<ResponseField name="username" type="string" required>
+  The username of the analyst who created the label. This allows tracking who added each label for collaboration and audit purposes.
+</ResponseField>
+
+<ResponseField name="timestamp" type="string" required>
+  ISO 8601 formatted timestamp indicating when the label was created.
+  
+  **Format:** `YYYY-MM-DDTHH:MM:SS` (UTC)
+  
+  **Example:** `2026-03-01T14:30:00`
+</ResponseField>
+
+## Label Usage in API Responses
+
+Labels appear in the `function_labels` array of function objects returned by various endpoints:
+
+```json
+{
+  "function_id": 12345,
+  "function_name": "sub_401000",
+  "function_labels": [
+    {
+      "function_label": "xor_decryption",
+      "username": "analyst_john",
+      "timestamp": "2026-02-28T10:15:30"
+    },
+    {
+      "function_label": "config_parser",
+      "username": "analyst_sarah",
+      "timestamp": "2026-03-01T16:45:00"
+    }
+  ]
+}
+```
+
+## Filtering by Labels
+
+You can filter function queries to only return labeled functions using the `with_label_only` parameter:
+
+### GET /functions with Labels
+
+```bash
+curl -X GET "https://api.example.com/functions?start=0&limit=100" \
+  -H "apitoken: your-api-token"
+```
+
+This returns all functions, including those without labels.
+
+### POST /functions with Label Filter
+
+```bash
+curl -X POST "https://api.example.com/functions?with_label_only=true" \
+  -H "apitoken: your-api-token" \
+  -H "Content-Type: text/plain" \
+  -d "12345,12346,12347,12348,12349"
+```
+
+This returns only the functions from the provided IDs that have at least one label assigned.
+
+## Common Label Patterns
+
+While labels are free-form, analysts often use consistent naming conventions:
+
+### Behavioral Categories
+- `encryption` / `decryption`
+- `compression` / `decompression`
+- `network_communication`
+- `file_operations`
+- `registry_operations`
+- `process_manipulation`
+
+### Security Features
+- `anti_debug`
+- `anti_vm`
+- `obfuscation`
+- `packing`
+- `string_decoding`
+
+### Malware Functionality
+- `payload_download`
+- `c2_communication`
+- `persistence_mechanism`
+- `credential_theft`
+- `keylogging`
+- `screenshot_capture`
+
+### Analysis Markers
+- `high_confidence`
+- `needs_review`
+- `false_positive`
+- `interesting`
+
+## Label Metadata
+
+The username and timestamp fields provide important context:
+
+- **Collaboration:** Multiple analysts can label the same function, and you can see who added each label
+- **Timeline:** Timestamps show the evolution of analysis over time
+- **Accountability:** Track which analyst made which annotations
+
+## Example: Multi-Analyst Labeling
+
+```json
+{
+  "function_id": 67890,
+  "function_name": "sub_405C20",
+  "function_labels": [
+    {
+      "function_label": "network_function",
+      "username": "initial_analyst",
+      "timestamp": "2026-01-15T09:00:00"
+    },
+    {
+      "function_label": "http_client",
+      "username": "network_specialist",
+      "timestamp": "2026-01-16T14:30:00"
+    },
+    {
+      "function_label": "exfiltration",
+      "username": "threat_researcher",
+      "timestamp": "2026-01-17T11:20:00"
+    }
+  ]
+}
+```
+
+This example shows how a function's understanding evolved as different analysts with different specializations examined it.
+
+## Empty Labels
+
+Functions may have an empty `function_labels` array if no labels have been assigned:
+
+```json
+{
+  "function_id": 11111,
+  "function_name": "sub_402000",
+  "function_labels": []
+}
+```
+
+## Integration with Other Features
+
+Labels work seamlessly with other MCRIT features:
+
+- **Search:** Find all functions with specific labels
+- **Filtering:** Narrow down large result sets to labeled functions
+- **Similarity Matching:** Compare labeled functions across samples to identify common malware components
+- **Reporting:** Generate reports focused on functions with specific labels

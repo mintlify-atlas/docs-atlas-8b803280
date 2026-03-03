@@ -1,0 +1,582 @@
+---
+title: Command-Line Interface
+description: Interact with MCRIT using the command-line client for sample submission, querying, and management
+---
+
+The MCRIT CLI provides a powerful command-line interface for interacting with MCRIT servers. It supports sample submission, matching queries, data management, and system monitoring.
+
+## Installation
+
+The CLI is included with the MCRIT package:
+
+```bash
+pip install mcrit
+```
+
+## Configuration
+
+The CLI can be configured using environment variables or a `.env` file:
+
+<CodeGroup>
+```bash Environment Variables
+export MCRIT_CLI_SERVER="http://localhost:8000"
+export MCRIT_CLI_APITOKEN="your-api-token"
+```
+
+```bash .env File
+# Create .env file in project root
+MCRIT_CLI_SERVER=http://localhost:8000
+MCRIT_CLI_APITOKEN=your-api-token
+```
+
+```bash Command-Line Override
+# Override environment variables
+mcrit client status --server http://custom:8000 --apitoken abc123
+```
+</CodeGroup>
+
+## Basic Usage
+
+All commands follow the pattern:
+
+```bash
+mcrit client <command> [options] [arguments]
+```
+
+## Commands
+
+### Status
+
+Retrieve server status and statistics:
+
+```bash
+mcrit client status
+```
+
+**Output:**
+```
+DB:        mongodb - 187 | 2023-03-29T13:20:40.593Z
+Families:  14
+Samples:   137
+Functions: 129110
+```
+
+### Submit
+
+Submit samples for analysis. The submit command supports multiple modes and options.
+
+<Tabs>
+  <Tab title="File Mode">
+    Submit a single file:
+
+    ```bash
+    # Submit single file
+    mcrit client submit malware.exe --mode file
+
+    # With metadata
+    mcrit client submit malware.exe \
+      --mode file \
+      --family emotet \
+      --version 2023.01
+
+    # Mark as library
+    mcrit client submit library.dll \
+      --mode file \
+      --library
+    ```
+
+    **Mapped binary with base address:**
+    ```bash
+    # File ending with 0x[address] is treated as mapped
+    mcrit client submit dump_0x00400000 --mode file
+    ```
+
+    **Output:**
+    ```
+    0.906s -> (architecture: intel.32bit, base_addr: 0x00400000): 922 functions
+    ```
+  </Tab>
+
+  <Tab title="Directory Mode">
+    Submit all files in a directory (non-recursive):
+
+    ```bash
+    # Submit all files in directory
+    mcrit client submit /path/to/samples/ --mode dir
+
+    # With family metadata
+    mcrit client submit /path/to/samples/ \
+      --mode dir \
+      --family wannacry \
+      --version 2017-05-12
+
+    # Only PE/ELF files
+    mcrit client submit /path/to/samples/ \
+      --mode dir \
+      --executables_only
+    ```
+
+    **Output:**
+    ```
+    0.763s -> (architecture: intel.32bit, base_addr: 0x00400000): 926 functions
+    0.884s -> (architecture: intel.32bit, base_addr: 0x00400000): 926 functions
+    0.830s -> (architecture: intel.32bit, base_addr: 0x00400000): 926 functions
+    ```
+  </Tab>
+
+  <Tab title="Recursive Mode">
+    Submit files from a structured directory tree:
+
+    **Expected structure:**
+    ```
+    root/
+      family_name/
+        version/
+          subversion/
+            files...
+    ```
+
+    ```bash
+    mcrit client submit /path/to/samples/ --mode recursive
+
+    # Mark all as libraries
+    mcrit client submit /path/to/libs/ \
+      --mode recursive \
+      --library
+    ```
+
+    The family name and version are extracted from the directory structure.
+  </Tab>
+
+  <Tab title="Malpedia Mode">
+    Synchronize with Malpedia repository:
+
+    ```bash
+    mcrit client submit /path/to/malpedia --mode malpedia
+    ```
+
+    **Requirements:**
+    - Directory must be named `malpedia`
+    - Must contain `malpedia.bib` file
+    - Only processes PE (win.*) and ELF families
+    - Only processes files labeled `_unpacked` or `_dump_0x...`
+
+    **Output:**
+    ```
+    /path/to/malpedia/win.3cx_backdoor/11be1803..._unpacked
+     1.625s -> (architecture: intel.64bit, base_addr: 0x180000000): 717 functions
+    /path/to/malpedia/win.8t_dropper/2019-01-23/b541e0e2..._unpacked
+     0.305s -> (architecture: intel.32bit, base_addr: 0x10000000): 213 functions
+    ```
+  </Tab>
+</Tabs>
+
+#### Submit Options
+
+<ResponseField name="filepath" type="string" required>
+  Path to file or directory to submit
+</ResponseField>
+
+<ResponseField name="--mode" type="string" default="file">
+  Submission mode: `file`, `dir`, `recursive`, or `malpedia`
+</ResponseField>
+
+<ResponseField name="-f, --family" type="string">
+  Set/override family name (modes: file, dir)
+</ResponseField>
+
+<ResponseField name="-v, --version" type="string">
+  Set/override version string (modes: file, dir)
+</ResponseField>
+
+<ResponseField name="-l, --library" type="boolean">
+  Mark samples as libraries (modes: file, dir, recursive)
+</ResponseField>
+
+<ResponseField name="-u, --force_update" type="boolean">
+  Force update metadata for existing samples (modes: file, dir)
+</ResponseField>
+
+<ResponseField name="-x, --executables_only" type="boolean">
+  Only process PE or ELF files
+</ResponseField>
+
+<ResponseField name="-o, --output" type="string">
+  Save SMDA reports to specified directory
+</ResponseField>
+
+<ResponseField name="-s, --smda" type="boolean">
+  Submit existing SMDA reports instead of disassembling (modes: file, dir)
+</ResponseField>
+
+<ResponseField name="-w, --worker" type="boolean">
+  Spawn subprocess workers for parallel processing (modes: dir, recursive, malpedia)
+</ResponseField>
+
+<ResponseField name="-t, --worker-timeout" type="integer" default="300">
+  Timeout for worker processes in seconds
+</ResponseField>
+
+#### Submit Examples
+
+<CodeGroup>
+```bash Single File with Metadata
+mcrit client submit malware.exe \
+  --mode file \
+  --family emotet \
+  --version 2023.01.15 \
+  --output ./reports/
+```
+
+```bash Directory with Workers
+mcrit client submit /samples/emotet/ \
+  --mode dir \
+  --family emotet \
+  --worker \
+  --executables_only
+```
+
+```bash SMDA Reports
+mcrit client submit /reports/ \
+  --mode dir \
+  --smda \
+  --force_update
+```
+
+```bash Recursive with Library Flag
+mcrit client submit /libraries/ \
+  --mode recursive \
+  --library \
+  --output ./smda_output/
+```
+</CodeGroup>
+
+### Query
+
+Query MCRIT for matches against a sample:
+
+```bash
+mcrit client query malware.exe
+```
+
+**With options:**
+```bash
+# Query mapped binary
+mcrit client query dump.bin \
+  --base_addr 0x400000 \
+  --bitness 64
+
+# Query SMDA report
+mcrit client query report.smda --smda
+
+# Save results
+mcrit client query malware.exe \
+  --output ./results/ \
+  --force-recalculation
+```
+
+#### Query Options
+
+<ResponseField name="filepath" type="string" required>
+  Path to file to query
+</ResponseField>
+
+<ResponseField name="-a, --base_addr" type="string">
+  Base address for mapped buffers (hex: 0x400000 or decimal)
+</ResponseField>
+
+<ResponseField name="-b, --bitness" type="string">
+  Binary bitness: `32` or `64` (default: 32)
+</ResponseField>
+
+<ResponseField name="-o, --output" type="string">
+  Directory to save matching report
+</ResponseField>
+
+<ResponseField name="-s, --smda" type="boolean">
+  Input is SMDA report
+</ResponseField>
+
+<ResponseField name="-f, --force-recalculation" type="boolean">
+  Force recalculation (ignore cached results)
+</ResponseField>
+
+**Output:**
+```
+Started job: 64243b27f3876416bffad86e, waiting for result...
+|                         Family |              Version | Sample |  SHA256 |  Func |   Min |   Pic |   Lib |        Direct |          Freq |
+|--------------------------------|----------------------|--------|---------|-------|-------|-------|-------|---------------|---------------|
+|                   win.wannacry |          vt-2017-05  |     42 | ca29de1d |   922 |   850 |    72 |    15 |  92.34  91.20 |  88.45  87.12 |
+|                   win.wannacry |          vt-2017-06  |     43 | 3e6de9e2 |   926 |   855 |    71 |    14 |  92.11  90.98 |  88.23  86.91 |
+```
+
+### Search
+
+Search across families, samples, and functions:
+
+```bash
+mcrit client search "emotet"
+```
+
+**Output:**
+```
+Family Search Results
+Family 2 (win.wannacry): 
+********************
+Sample Search Results
+Sample 1 (intel, 32 bit) - ca29de1d...c8_unpacked (win.wannacry): 
+Sample 2 (intel, 32 bit) - 3e6de9e2...9 (win.wannacry): 
+********************
+Function Search Results
+...
+```
+
+### Queue
+
+View processing queue status:
+
+```bash
+# View all jobs
+mcrit client queue
+
+# Filter by term
+mcrit client queue --filter "matching"
+```
+
+**Output:**
+```
+64243b27f3876416bffad86e 64243b28cbc77c2df4d8d79f | 2023-03-29T13:20:39.065Z 2023-03-29T13:20:39.114Z 2023-03-29T13:20:40.593Z | updateMinHashesForSample(2) - 1
+641316eefbb4d9d4a029164a 641316f115e4f20d519b322b | 2023-03-16T13:17:34.834Z 2023-03-16T13:17:34.859Z 2023-03-16T13:17:37.238Z | addBinarySample(...) - 1
+```
+
+### Export
+
+Export samples in MCRIT format:
+
+```bash
+# Export all data
+mcrit client export full_database.mcrit
+
+# Export specific samples
+mcrit client export samples.mcrit --sample_ids "1,2,3,4,5"
+```
+
+**Output file format:**
+```json
+{
+  "content": {
+    "is_compressed": true,
+    "num_families": 1,
+    "num_samples": 1,
+    "num_functions": 214
+  },
+  "config": {
+    "version": "1.4.6",
+    "shingler": "7ae53d3b..."
+  },
+  ...
+}
+```
+
+### Import
+
+Import previously exported MCRIT data:
+
+```bash
+mcrit client import samples.mcrit
+```
+
+**Output:**
+```json
+{
+  "num_samples_imported": 5,
+  "num_samples_skipped": 1,
+  "num_functions_imported": 1247,
+  "num_functions_skipped": 214,
+  "num_families_imported": 2,
+  "num_families_skipped": 0
+}
+```
+
+## Complete Examples
+
+<AccordionGroup>
+  <Accordion title="Batch submit malware samples">
+    ```bash
+    #!/bin/bash
+
+    # Set environment
+    export MCRIT_CLI_SERVER="http://mcrit.local:8000"
+    export MCRIT_CLI_APITOKEN="secret-token"
+
+    # Submit emotet samples
+    mcrit client submit /samples/emotet/ \
+      --mode dir \
+      --family emotet \
+      --version 2023.01 \
+      --executables_only \
+      --output ./reports/emotet/ \
+      --worker
+
+    # Check status
+    mcrit client status
+
+    # View queue
+    mcrit client queue --filter emotet
+    ```
+  </Accordion>
+
+  <Accordion title="Query and save results">
+    ```bash
+    #!/bin/bash
+
+    SAMPLE="unknown_malware.exe"
+    OUTPUT_DIR="./analysis_results"
+
+    mkdir -p $OUTPUT_DIR
+
+    # Query with force recalculation
+    mcrit client query $SAMPLE \
+      --output $OUTPUT_DIR \
+      --force-recalculation
+
+    # Results saved to:
+    # ./analysis_results/<job_id>.json
+    ```
+  </Accordion>
+
+  <Accordion title="Synchronize Malpedia">
+    ```bash
+    #!/bin/bash
+
+    MALPEDIA_PATH="/data/malpedia"
+    MCRIT_SERVER="http://localhost:8000"
+
+    # Initial sync (first run)
+    mcrit client submit $MALPEDIA_PATH \
+      --server $MCRIT_SERVER \
+      --mode malpedia \
+      --worker \
+      --worker-timeout 600
+
+    # Incremental sync (updates only)
+    # Re-run same command - already processed files are skipped
+    mcrit client submit $MALPEDIA_PATH \
+      --server $MCRIT_SERVER \
+      --mode malpedia
+    ```
+  </Accordion>
+
+  <Accordion title="Export and backup database">
+    ```bash
+    #!/bin/bash
+
+    BACKUP_DIR="./mcrit_backups"
+    DATE=$(date +%Y%m%d)
+
+    mkdir -p $BACKUP_DIR
+
+    # Export full database
+    mcrit client export "$BACKUP_DIR/mcrit_backup_$DATE.mcrit"
+
+    # Compress backup
+    gzip "$BACKUP_DIR/mcrit_backup_$DATE.mcrit"
+
+    echo "Backup saved to: $BACKUP_DIR/mcrit_backup_$DATE.mcrit.gz"
+    ```
+  </Accordion>
+
+  <Accordion title="Process directory with metadata from structure">
+    ```bash
+    #!/bin/bash
+
+    # Directory structure:
+    # /samples/
+    #   emotet/
+    #     2023.01/
+    #       variant_a/
+    #         sample1.exe
+    #         sample2.exe
+
+    mcrit client submit /samples/ \
+      --mode recursive \
+      --executables_only \
+      --output ./smda_reports/ \
+      --worker \
+      --worker-timeout 300
+
+    # Family and version automatically extracted from paths
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Tips & Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Workers for Large Batches" icon="users">
+    Enable `--worker` flag when processing directories to parallelize submissions and avoid timeouts.
+  </Card>
+  
+  <Card title="Save SMDA Reports" icon="floppy-disk">
+    Use `--output` to save disassembly reports for faster re-submission or offline analysis.
+  </Card>
+  
+  <Card title="Filter Executables" icon="filter">
+    Use `--executables_only` to skip non-PE/ELF files when processing mixed directories.
+  </Card>
+  
+  <Card title="Environment Configuration" icon="gear">
+    Use `.env` file or environment variables to avoid passing `--server` and `--apitoken` with every command.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Connection refused">
+    **Error:** `Failed to connect to MCRIT server`
+
+    **Solutions:**
+    - Verify server is running: `curl http://localhost:8000/status`
+    - Check `MCRIT_CLI_SERVER` environment variable
+    - Ensure no firewall blocking the port
+  </Accordion>
+
+  <Accordion title="Authentication failed">
+    **Error:** `401 Unauthorized`
+
+    **Solutions:**
+    - Verify API token is correct
+    - Check `MCRIT_CLI_APITOKEN` environment variable
+    - Ensure token hasn't expired
+  </Accordion>
+
+  <Accordion title="Worker timeout">
+    **Error:** `Processing timed out during processing`
+
+    **Solutions:**
+    - Increase timeout: `--worker-timeout 600`
+    - Process smaller batches
+    - Check server resources (CPU, memory)
+  </Accordion>
+
+  <Accordion title="File already in MCRIT">
+    **Message:** `SKIPPING: <file> - already in MCRIT`
+
+    **Solutions:**
+    - Use `--force_update` to update metadata
+    - Skip if intentional (duplicate detection working)
+    - Delete existing sample if full re-import needed
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Python Client" icon="python" href="/integrations/python-client">
+    Use the Python API for programmatic access
+  </Card>
+  <Card title="IDA Plugin" icon="code" href="/integrations/ida-plugin">
+    Integrate MCRIT into IDA Pro workflow
+  </Card>
+</CardGroup>

@@ -1,0 +1,510 @@
+---
+title: Storage Architecture
+description: Understanding MCRIT's storage backends and indexing strategies for scalable function matching
+---
+
+MCRIT's storage layer manages samples, functions, MinHashes, PicHashes, and their indices. The architecture supports multiple backends and is designed to scale from thousands to millions of functions.
+
+## Overview
+
+The storage layer provides:
+
+- **Data persistence**: Samples, functions, families, and metadata
+- **MinHash indexing**: Band-based LSH indices for fast candidate retrieval
+- **PicHash indexing**: Hash-to-function mappings for exact matches
+- **Query interface**: Unified API across storage backends
+- **Caching**: Temporary storage for matching operations
+
+## Storage Backends
+
+MCRIT supports two storage implementations:
+
+### MemoryStorage
+
+**Use Case**: Testing, development, small datasets (< 10,000 functions)
+
+**Characteristics**:
+- Pure Python dictionaries and sets
+- No persistence (data lost on restart)
+- Fast for small datasets
+- Simple deployment (no external dependencies)
+
+```python
+STORAGE_METHOD = StorageFactory.STORAGE_METHOD_MEMORY
+```
+
+### MongoDbStorage (Recommended)
+
+**Use Case**: Production, persistent storage, large datasets (millions of functions)
+
+**Characteristics**:
+- Uses MongoDB 5.0+ as backend
+- Full persistence and crash recovery
+- Indexed queries for scalability
+- Supports concurrent access
+- Enables distributed deployment
+
+```python
+STORAGE_METHOD = StorageFactory.STORAGE_METHOD_MONGODB
+STORAGE_SERVER = "127.0.0.1"
+STORAGE_PORT = "27017"
+STORAGE_MONGODB_DBNAME = "mcrit"
+```
+
+Source: `mcrit/config/StorageConfig.py:12-18`
+
+<Info>
+The default configuration uses MongoDB. We highly recommend this for any production deployment or when working with more than a few hundred samples.
+</Info>
+
+## Storage Interface
+
+Both backends implement `StorageInterface`, providing a consistent API:
+
+```python
+class StorageInterface:
+    def __init__(self, config: "McritConfig") -> None:
+        self._config = config
+        self._storage_config = config.STORAGE_CONFIG
+        self._minhash_config = config.MINHASH_CONFIG
+        self._band_projection = None
+```
+
+Source: `mcrit/storage/StorageInterface.py:29-46`
+
+## Data Model
+
+### Core Entities
+
+**FamilyEntry**
+- `family_id`: Unique identifier
+- `family_name`: Human-readable name
+- `is_library`: Boolean flag for library families
+
+**SampleEntry**
+- `sample_id`: Unique identifier
+- `family_id`: Reference to family
+- `sha256`: Binary hash for deduplication
+- `filename`, `version`, `bitness`: Metadata
+- `statistics`: Aggregated function counts and sizes
+- `binweight`: Total code size
+
+**FunctionEntry**
+- `function_id`: Unique identifier
+- `sample_id`: Parent sample reference
+- `family_id`: Denormalized for faster queries
+- `offset`: Function start address
+- `num_instructions`, `num_blocks`: Size metrics
+- `binweight`: Function code size
+- `pichash`: Position-independent code hash
+- `picblockhashes`: Per-block hashes
+- `minhash`: MinHash signature (bytes)
+- `minhash_shingle_composition`: Shingler usage statistics
+- `xcfg`: eXtended Control Flow Graph (optional)
+
+Source: `mcrit/storage/FunctionEntry.py:21-156`
+
+## Indexing Strategies
+
+### MinHash Band Indexing
+
+MCRIT uses Locality-Sensitive Hashing (LSH) with banding to index MinHash signatures:
+
+#### Band Projection
+
+A band projection defines which signature positions are used for each band:
+
+```python
+def createBandhashProjection(self, minhash):
+    band_projection = {}
+    banding_strategy = getattr(self._storage_config, "STORAGE_BAND_STRATEGY", "random")
+    
+    if banding_strategy == "random":
+        random.seed(self._storage_config.STORAGE_BAND_SEED)
+        band_index = 0
+        for band_size, num_bands in self._storage_config.STORAGE_BANDS.items():
+            for _ in range(num_bands):
+                index_sequence = [index for index in range(len(minhash.getMinHashInt()))]
+                random.shuffle(index_sequence)
+                band_projection[band_index] = index_sequence[:band_size]
+                band_index += 1
+    
+    elif banding_strategy == "linear":
+        # Sequential, non-overlapping bands
+        band_size = list(self._storage_config.STORAGE_BANDS.keys())[0]
+        num_bands = list(self._storage_config.STORAGE_BANDS.values())[0]
+        for band_index in range(num_bands):
+            index_sequence = []
+            step_size = int(self._minhash_config.MINHASH_SIGNATURE_LENGTH / band_size)
+            for index_num in range(band_size):
+                index_sequence.append(index_num * step_size + band_index)
+            band_projection[band_index] = index_sequence
+    
+    return band_projection
+```
+
+Source: `mcrit/storage/StorageInterface.py:681-717`
+
+#### Band Hash Calculation
+
+For each band, selected signature positions are hashed:
+
+```python
+def getBandHashesForMinHash(self, minhash: "MinHash") -> Dict[int, int]:
+    if self._band_projection is None:
+        self._band_projection = self.createBandhashProjection(minhash)
+    
+    band_hashes = {}
+    minhash_data = minhash.getMinHashInt()
+    
+    for band_index, permutation in self._band_projection.items():
+        # Extract selected positions
+        band_data = [minhash_data[i] for i in permutation]
+        # Hash to create band hash
+        hashed_band_data = MinHash.hashData(band_data, 0)
+        band_hashes[band_index] = hashed_band_data
+    
+    return band_hashes
+```
+
+Source: `mcrit/storage/StorageInterface.py:720-735`
+
+#### Configuration
+
+```python
+# Banding strategy: "random" or "linear" (v1.4.6+)
+STORAGE_BAND_STRATEGY = "random"
+
+# Random seed for band generation ("random" strategy)
+STORAGE_BAND_SEED: int = 0xDEADBEEF
+
+# Band configuration: {band_size: num_bands}
+STORAGE_BANDS: Dict[int, int] = {4: 20}  # 20 bands of 4 positions each
+```
+
+Source: `mcrit/config/StorageConfig.py:28-39`
+
+<Note>
+Changing band configuration requires rebuilding the entire band index via `rebuildMinhashBandIndex()`.
+</Note>
+
+### Linear Banding Strategy (v1.4.6+)
+
+The linear strategy provides better predictability:
+
+- **Band 0**: Positions [0, 16, 32, 48]
+- **Band 1**: Positions [1, 17, 33, 49]
+- **Band 2**: Positions [2, 18, 34, 50]
+- ...
+- **Band 15**: Positions [15, 31, 47, 63]
+
+Requirements:
+- Single band size definition
+- `band_size × num_bands = MINHASH_SIGNATURE_LENGTH`
+- Recommended: `{4: 16}` for 64-element signatures
+
+```python
+if banding_strategy == "linear":
+    if len(self._storage_config.STORAGE_BANDS) != 1:
+        raise AttributeError("When using linear strategy, use only a single band_size definition")
+    if not band_size * num_bands == self._minhash_config.MINHASH_SIGNATURE_LENGTH:
+        raise AttributeError(f"Product of band_size ({band_size}) and num_bands ({num_bands}) "
+                           f"must equal MINHASH_SIGNATURE_LENGTH ({MINHASH_SIGNATURE_LENGTH})")
+```
+
+Source: `mcrit/storage/StorageInterface.py:699-707`
+
+### PicHash Indexing
+
+PicHash uses simple hash-to-function-list mappings:
+
+```python
+def getMatchesForPicHash(self, pichash: int) -> Set[Tuple[int, int, int]]:
+    """Get all (family_id, sample_id, function_id) tuples for a given PicHash
+    
+    Args:
+        pichash: the pichash to look up
+        
+    Returns:
+        a set of (family_id, sample_id, function_id) tuples with the given pichash
+    """
+```
+
+In MongoDB, this is implemented as an indexed collection:
+```
+pichashes: {
+    _id: pichash_value,
+    functions: [(family_id, sample_id, function_id), ...]
+}
+```
+
+Source: `mcrit/storage/StorageInterface.py:570-579`
+
+## Candidate Retrieval
+
+Retrieving match candidates using band indices:
+
+```python
+def getCandidatesForMinHash(self, minhash: "MinHash", band_matches_required=1) -> Set[int]:
+    """Given a MinHash, return all candidates from matching bands.
+    
+    Args:
+        minhash: a MinHash object
+        band_matches_required: number of bands required to match
+        
+    Returns:
+        candidates: a set of function_ids
+    """
+
+def getCandidatesForMinHashes(self, function_id_to_minhash: Dict[int, "MinHash"], 
+                              band_matches_required=1) -> Dict[int, Set[int]]:
+    """Batch version for multiple MinHashes
+    
+    Args:
+        function_id_to_minhash: dict mapping function_id to MinHash
+        band_matches_required: number of bands required to match
+        
+    Returns:
+        candidates: dict mapping function_id to set of candidate function_ids
+    """
+```
+
+Source: `mcrit/storage/StorageInterface.py:75-99`
+
+### Band Matching Process
+
+1. Calculate band hashes for query MinHash
+2. For each band, retrieve all functions with matching band hash
+3. Count band matches per function
+4. Return functions with ≥ `band_matches_required` matches
+
+<Tip>
+The default `BAND_MATCHES_REQUIRED=2` provides a good balance. Increase for higher precision (fewer false positives), decrease for higher recall (more potential matches).
+</Tip>
+
+## MongoDB Collections
+
+MongoDbStorage organizes data into collections:
+
+- **families**: Family metadata
+- **samples**: Sample metadata and statistics
+- **functions**: Function entries with MinHashes
+- **pichashes**: PicHash to function mappings
+- **picblockhashes**: PicBlockHash to function/offset mappings
+- **bands_X**: MinHash band indices (one per band ID)
+- **xcfgs**: Extended control flow graphs (optional)
+- **jobs**: Job queue and history
+- **events**: Event log
+
+### Indexing
+
+Critical indices for performance:
+```python
+# Sample lookups
+samples.createIndex({"sha256": 1})
+samples.createIndex({"family_id": 1})
+
+# Function lookups
+functions.createIndex({"sample_id": 1})
+functions.createIndex({"family_id": 1})
+functions.createIndex({"pichash": 1})
+
+# Band lookups
+bands_X.createIndex({"band_hash": 1})
+```
+
+## Matching Cache
+
+During matching, a temporary cache avoids repeated database queries:
+
+```python
+def createMatchingCache(self, function_ids: List[int]) -> Union["MemoryStorage", "MatchingCache"]:
+    """Creates a temporary matching cache for a list of function_ids
+    
+    Args:
+        function_ids: list of function ids
+        
+    Returns:
+        a matching cache for the specified function ids
+    """
+```
+
+The cache provides:
+- `getMinHashByFunctionId(function_id)`: Fast MinHash retrieval
+- `getSampleIdByFunctionId(function_id)`: Sample mapping
+- `getFunctionIdsBySampleId(sample_id)`: Reverse lookup
+- `isSampleId(sample_id)`: Existence check
+
+Source: `mcrit/storage/StorageInterface.py:360-379`
+
+<Info>
+Caches are cleared after each matching operation to free memory: `clearMatchingCache()`.
+</Info>
+
+## Data Import/Export
+
+MCRIT supports bulk import/export for data migration:
+
+```python
+def getContent(self, sample_ids: Optional[List[int]] = None) -> Dict[str, Any]:
+    """Export samples, functions, and families
+    
+    Args:
+        sample_ids: optional filter for specific samples
+        
+    Returns:
+        dict containing all data
+    """
+
+def addContent(self, content: Dict[str, Any]) -> None:
+    """Import data, remapping IDs and filtering duplicates
+    
+    Args:
+        content: dict from getContent()
+    """
+
+def setContent(self, content: Dict[str, Any]) -> None:
+    """Replace all storage content
+    
+    Args:
+        content: dict from getContent()
+    """
+```
+
+Source: `mcrit/storage/StorageInterface.py:451-462`
+
+### Export Size Limit
+
+```python
+STORAGE_MAX_EXPORT_SIZE = 1024 * 1024 * 1024  # 1 GB default
+```
+
+Prevents out-of-memory crashes on large exports.
+
+## Maintenance Operations
+
+### Rebuilding Indices
+
+```python
+def rebuildMinhashBandIndex(self) -> int:
+    """Drop and rebuild band index from scratch
+    
+    Returns:
+        the number of minhashes indexed
+    """
+```
+
+Required when:
+- Changing band configuration
+- After bulk imports
+- Repairing corrupted indices
+
+Source: `mcrit/storage/StorageInterface.py:658-663`
+
+### Recalculating PicHashes
+
+```python
+def recalculateAllPicHashes(self) -> int:
+    """Recalculate PicHashes using current SMDA version
+    
+    Returns:
+        the number of pichashes recalculated
+    """
+```
+
+Used when SMDA updates its normalization algorithm.
+
+Source: `mcrit/storage/StorageInterface.py:665-672`
+
+### Deleting MinHashes
+
+```python
+def deleteAllMinHashes(self) -> int:
+    """Drop every minhash in preparation for full rebuild
+    
+    Returns:
+        the number of minhashes dropped
+    """
+```
+
+Useful when changing MinHash/shingler configuration.
+
+Source: `mcrit/storage/StorageInterface.py:674-679`
+
+## Configuration Options
+
+### MongoDB Connection
+
+```python
+STORAGE_SERVER: str = "127.0.0.1"
+STORAGE_PORT: str = "27017"
+STORAGE_MONGODB_DBNAME: str = "mcrit"
+STORAGE_MONGODB_USERNAME: str = None  # Optional authentication
+STORAGE_MONGODB_PASSWORD: str = None
+STORAGE_MONGODB_FLAGS: str = ""  # Additional connection flags
+```
+
+Source: `mcrit/config/StorageConfig.py:14-21`
+
+### Cleanup (Optional)
+
+```python
+# Automatic deletion of old query samples
+STORAGE_MONGODB_ENABLE_CLEANUP: bool = False
+STORAGE_MONGODB_CLEANUP_DELTA: int = 60 * 60 * 24 * 7  # 1 week
+STORAGE_MONGODB_CLEANUP_TTL: int = 60 * 60 * 24 * 7     # 1 week
+```
+
+When enabled, query samples older than `CLEANUP_TTL` are automatically deleted.
+
+### Disassembly Storage
+
+```python
+# Drop XCFG data after MinHash calculation to save space
+STORAGE_DROP_DISASSEMBLY: bool = False
+```
+
+<Note>
+Dropping disassembly saves significant storage but prevents future reanalysis or detailed inspection of functions.
+</Note>
+
+### Caching
+
+```python
+# Use in-memory hashmap for band data (fast but memory-intensive)
+STORAGE_CACHE: bool = False
+```
+
+Only recommended for systems with abundant RAM (> 64GB for large databases).
+
+## Performance Considerations
+
+### Indexing Speed
+- MinHash generation: ~1-2ms per function
+- Band indexing: ~0.1ms per function
+- Full database reindex: ~1M functions/hour (parallelized)
+
+### Query Performance
+- PicHash lookup: O(1) hash table access
+- Band candidate retrieval: O(k) where k = num_bands × avg_functions_per_band
+- MinHash scoring: O(n) where n = num_candidates
+
+### Scaling
+
+| Database Size | Recommended RAM | Index Size | Query Time |
+|---------------|-----------------|------------|------------|
+| 100K functions | 4 GB | ~500 MB | < 1s |
+| 1M functions | 16 GB | ~5 GB | < 5s |
+| 10M functions | 64 GB | ~50 GB | < 30s |
+| 100M functions | 256 GB | ~500 GB | < 5min |
+
+<Tip>
+For very large deployments (> 10M functions), consider MongoDB sharding and distributed worker pools.
+</Tip>
+
+## Related Concepts
+
+- [MinHash](/concepts/minhash) - What's being indexed
+- [PicHash](/concepts/pichash) - Exact hash indexing
+- [Matching](/concepts/matching) - How indices are queried
+- [Shinglers](/concepts/shinglers) - Feature extraction before storage

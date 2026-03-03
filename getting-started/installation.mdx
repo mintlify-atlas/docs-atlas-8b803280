@@ -1,0 +1,151 @@
+---
+title: Installation
+description: Install MCRIT and its dependencies on your system
+---
+
+MCRIT can be installed in two ways: using the fully packaged Docker solution for easy deployment, or as a standalone installation for more control over the setup.
+
+## Recommended: Docker Installation
+
+We highly recommend using the fully packaged [docker-mcrit](https://github.com/danielplohmann/docker-mcrit) for trivial deployment and usage.
+
+This approach ensures:
+- Fully compatible versions across all components
+- Pre-configured MongoDB database for persistence
+- Web frontend for convenient interaction
+- No manual dependency management
+
+For detailed Docker setup instructions, see the [Docker Setup](/getting-started/docker-setup) guide.
+
+## Standalone Installation
+
+For a standalone installation, you'll need to install MCRIT and its dependencies manually. The following instructions assume Ubuntu as the host operating system.
+
+<Steps>
+  <Step title="Install Python and pip">
+    MCRIT requires Python 3 and pip:
+    
+    ```bash
+    sudo apt install python3 python3-pip
+    ```
+  </Step>
+
+  <Step title="Install MCRIT dependencies">
+    Install the required Python packages from `requirements.txt`:
+    
+    ```bash
+    pip install -r requirements.txt
+    ```
+    
+    The main dependencies include:
+    - `falcon>=2.0.0` - Web framework for the REST API
+    - `pymongo` - MongoDB driver
+    - `smda>=1.13.19` - Disassembly framework
+    - `picblocks>=1.1.2` - PicHash functionality
+    - `mmh3>=2.5.1` - MurmurHash3 implementation
+    - `numpy<2.0.0` - Numerical computations
+    - `scipy` - Scientific computing
+    - `lief>=0.16.0` - Binary parsing
+    - `gunicorn` - WSGI server (Linux only)
+    - `waitress` - WSGI server (cross-platform)
+  </Step>
+
+  <Step title="Install MongoDB 5.0">
+    MongoDB 5.0 is the recommended database backend for persistent storage.
+    
+    <CodeGroup>
+    ```bash Ubuntu 22.04
+    # Install gnupg for key management
+    sudo apt-get install gnupg
+    
+    # Fetch MongoDB signing key
+    wget -qO - https://www.mongodb.org/static/pgp/server-5.0.asc | sudo apt-key add -
+    
+    # Add MongoDB repository
+    echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/5.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-5.0.list
+    
+    # Install MongoDB
+    sudo apt-get update
+    sudo apt-get install -y mongodb-org
+    
+    # Start MongoDB service
+    sudo systemctl start mongod
+    
+    # Enable MongoDB to start on system boot
+    sudo systemctl enable mongod
+    ```
+    
+    ```bash Ubuntu 20.04
+    # Install gnupg for key management
+    sudo apt-get install gnupg
+    
+    # Fetch MongoDB signing key
+    wget -qO - https://www.mongodb.org/static/pgp/server-5.0.asc | sudo apt-key add -
+    
+    # Add MongoDB repository
+    echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/5.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-5.0.list
+    
+    # Install MongoDB
+    sudo apt-get update
+    sudo apt-get install -y mongodb-org
+    
+    # Start MongoDB service
+    sudo systemctl start mongod
+    
+    # Enable MongoDB to start on system boot
+    sudo systemctl enable mongod
+    ```
+    
+    ```bash Ubuntu 18.04
+    # Install gnupg for key management
+    sudo apt-get install gnupg
+    
+    # Fetch MongoDB signing key
+    wget -qO - https://www.mongodb.org/static/pgp/server-5.0.asc | sudo apt-key add -
+    
+    # Add MongoDB repository
+    echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu bionic/mongodb-org/5.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-5.0.list
+    
+    # Install MongoDB
+    sudo apt-get update
+    sudo apt-get install -y mongodb-org
+    
+    # Start MongoDB service
+    sudo systemctl start mongod
+    
+    # Enable MongoDB to start on system boot
+    sudo systemctl enable mongod
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Install MCRIT module">
+    Install MCRIT in editable mode from the cloned repository:
+    
+    ```bash
+    pip install -e .
+    ```
+    
+    This allows you to modify the source code while using the installed module.
+  </Step>
+</Steps>
+
+## Offline Usage
+
+After the initial installation is complete, MCRIT can be used without an internet connection if desired.
+
+## Verification
+
+To verify the installation, check the MCRIT version:
+
+```bash
+mcrit --help
+```
+
+You should see the available commands: `server`, `worker`, `spawningworker`, and `client`.
+
+## Next Steps
+
+- Follow the [Quickstart](/getting-started/quickstart) guide to start using MCRIT
+- Learn about [Configuration](/getting-started/configuration) options
+- Explore the [Docker Setup](/getting-started/docker-setup) for containerized deployment

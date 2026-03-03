@@ -1,0 +1,667 @@
+---
+title: Features
+description: Comprehensive guide to MCRIT's code similarity matching and analysis capabilities
+---
+
+# Core features
+
+MCRIT provides a comprehensive suite of features for code similarity analysis, malware investigation, and binary comparison at scale.
+
+## Similarity matching
+
+### Sample-level matching
+
+Compare entire binary samples against the database to find similar files.
+
+```python
+from mcrit.client.McritClient import McritClient
+
+client = McritClient()
+
+# Submit a sample and get matches
+with open('suspicious.exe', 'rb') as f:
+    result = client.addBinarySample(
+        f.read(),
+        filename='suspicious.exe',
+        family='unknown'
+    )
+
+# Query matches for an existing sample
+sample_id = 12345
+matches = client.getMatchesForSample(sample_id)
+
+# Filter results
+filtered = matches.filter(
+    min_score=70,           # Minimum similarity score
+    unique_only=True,       # Only unique matches
+    min_functions=10        # Minimum matched functions
+)
+```
+
+**Matching capabilities:**
+
+<CardGroup cols={2}>
+  <Card title="MinHash matching" icon="hashtag">
+    Fuzzy similarity using MinHash signatures with configurable thresholds (0-100%). Default threshold: 50%.
+  </Card>
+  <Card title="PicHash matching" icon="code">
+    Position-independent code hash for exact function matches, even across different load addresses.
+  </Card>
+  <Card title="Band-based indexing" icon="layer-group">
+    LSH banding for efficient candidate selection from large databases without comparing all functions.
+  </Card>
+  <Card title="Configurable thresholds" icon="sliders">
+    Adjust matching sensitivity per query with custom thresholds and band requirements.
+  </Card>
+</CardGroup>
+
+### Function-level matching
+
+Perform granular comparisons at the function level.
+
+```python
+# Match specific functions
+function_id = 67890
+matches = client.getMatchesForFunction(function_id)
+
+# Compare two functions directly
+match_result = client.compareFunctions(function_id_a, function_id_b)
+print(f"Similarity: {match_result['minhash_score']}%")
+
+# Query a function from SMDA report
+from smda.common.SmdaFunction import SmdaFunction
+
+function_matches = client.queryFunction(smda_function)
+```
+
+### Sample-to-sample comparison
+
+Compare two specific samples for detailed analysis.
+
+```python
+# Direct comparison between two samples
+sample_a = 100
+sample_b = 200
+
+comparison = client.getMatchesForSampleVs(sample_a, sample_b)
+
+print(f"Matched functions: {comparison['num_matches']}")
+print(f"Average score: {comparison['average_score']}")
+```
+
+### Cross-comparison jobs
+
+Compare multiple samples against each other simultaneously.
+
+```python
+# Cross-compare a set of samples
+sample_ids = [100, 101, 102, 103, 104]
+
+cross_job = client.requestMatchesCross(sample_ids)
+
+# Wait for job completion
+job_info = client.waitForJobCompletion(cross_job['job_id'])
+result = client.getResultForJob(cross_job['job_id'])
+```
+
+## Query modes
+
+MCRIT supports multiple query modes for different scenarios.
+
+### Binary query (unmapped)
+
+Query an arbitrary binary without loading it into the database.
+
+```python
+# Query unmapped binary (e.g., unpacked malware)
+with open('sample_unpacked.bin', 'rb') as f:
+    binary_data = f.read()
+
+query_result = client.getMatchesForUnmappedBinary(
+    binary_data,
+    minhash_threshold=60
+)
+
+# Access matches
+for family, matches in query_result['matches']['families'].items():
+    print(f"{family}: {matches['num_functions']} functions")
+```
+
+<Info>
+Unmapped binary queries are automatically cleaned up after 7 days (configurable) to prevent database bloat.
+</Info>
+
+### Binary query (mapped)
+
+Query a memory dump with a specific base address.
+
+```python
+# Query memory dump
+with open('memory_dump.bin', 'rb') as f:
+    dump_data = f.read()
+
+query_result = client.getMatchesForMappedBinary(
+    dump_data,
+    base_address=0x400000,
+    minhash_threshold=50
+)
+```
+
+### SMDA report query
+
+Query using a pre-generated SMDA disassembly report.
+
+```python
+import json
+from smda.common.SmdaReport import SmdaReport
+
+# Load SMDA report
+with open('sample_report.smda', 'r') as f:
+    report_dict = json.load(f)
+
+smda_report = SmdaReport.fromDict(report_dict)
+
+# Query the report
+query_result = client.getMatchesForSmdaReport(
+    smda_report,
+    pichash_size=10,
+    band_matches_required=3
+)
+```
+
+## Hash-based queries
+
+### PicHash queries
+
+Search for functions with specific position-independent code hashes.
+
+```python
+# Query by PicHash
+pichash = "a3f5b8c9d2e1"
+results = client.queryPicHash(pichash)
+
+for match in results:
+    print(f"Sample: {match['sample_id']}, Function: {match['function_name']}")
+
+# Get summary statistics
+summary = client.queryPicHashSummary(pichash)
+print(f"Total matches: {summary['total_functions']}")
+print(f"Families: {', '.join(summary['families'])}")
+```
+
+**PicHash characteristics:**
+
+- Position-independent: Matches across different load addresses
+- Architecture-aware: Accounts for different instruction sets
+- Minimum size: Configurable (default 10 instructions)
+- Use case: Exact function matching for library detection
+
+### PicBlockHash queries
+
+Query at the basic block level for more granular matching.
+
+```python
+# Query by PicBlockHash
+picblockhash = "e7f8a9b0c1d2"
+block_matches = client.queryPicBlockHash(picblockhash)
+
+# Useful for identifying shared code blocks
+for match in block_matches:
+    print(f"Function {match['function_id']} contains block")
+```
+
+## Advanced analysis features
+
+### Unique block identification
+
+Identify code blocks unique to a set of samples (e.g., malware family).
+
+```python
+# Find unique blocks in a set of samples
+sample_ids = [100, 101, 102, 103]
+
+unique_blocks_job = client.getUniqueBlocksForSamples(sample_ids)
+result = client.getResultForJob(unique_blocks_job['job_id'])
+
+# Access unique blocks
+for block_hash, block_info in result['unique_blocks'].items():
+    print(f"Block: {block_hash}")
+    print(f"  Score: {block_info['score']}")
+    print(f"  Samples: {len(block_info['samples'])}")
+    print(f"  Escaped sequence: {block_info['escaped_sequence']}")
+
+# Generated YARA rule
+if result['statistics']['has_yara_rule']:
+    yara_rule = result['yara_rule']
+    print(f"YARA rule with {len(yara_rule)} patterns")
+```
+
+**Use cases:**
+
+- Malware family signature generation
+- Creating detection rules for specific threats
+- Identifying distinctive code patterns
+- YARA rule creation
+
+<Note>
+The unique blocks feature automatically generates a greedy set cover of PicBlockHashes that can identify the target samples with a YARA rule.
+</Note>
+
+### Family-based unique blocks
+
+Find unique blocks for an entire malware family.
+
+```python
+# Get unique blocks for a family
+family_id = 42
+
+family_blocks_job = client.getUniqueBlocksForFamily(family_id)
+result = client.getResultForJob(family_blocks_job['job_id'])
+
+print(f"Covers {result['statistics']['num_samples_covered']} samples")
+print(f"Complete rule: {result['statistics']['has_complete_yara_rule']}")
+```
+
+### LinkHunt analysis
+
+Identify function call relationships and shared library code.
+
+```python
+# Get matches with LinkHunt analysis
+matches = client.getMatchesForSample(
+    sample_id,
+    minhash_threshold=60
+)
+
+# Access LinkHunt results
+if 'linkhunt' in matches:
+    clusters = matches['linkhunt']['clusters']
+    for cluster in clusters:
+        print(f"Cluster: {cluster['id']}")
+        print(f"  Functions: {len(cluster['functions'])}")
+        print(f"  Call relationships: {cluster['call_links']}")
+```
+
+**LinkHunt capabilities:**
+
+- Identifies function call chains
+- Clusters related functions
+- Helps distinguish library code from unique malware code
+- Improves attribution accuracy
+
+## Database management
+
+### Sample management
+
+```python
+# List all samples
+samples = client.getSamples()
+
+# Get sample by ID
+sample = client.getSampleById(12345)
+print(f"Family: {sample['family']}")
+print(f"Architecture: {sample['architecture']}")
+print(f"Functions: {sample['statistics']['num_functions']}")
+
+# Get sample by SHA256
+sample = client.getSampleBySha256("abc123...")
+
+# Update sample metadata
+client.modifySample(
+    sample_id=12345,
+    family="emotet",
+    version="2023.01",
+    is_library=False
+)
+
+# Delete a sample
+client.deleteSample(12345)
+```
+
+### Family management
+
+```python
+# List all families
+families = client.getFamilies()
+
+for family in families:
+    print(f"{family['family_name']}: {family['num_samples']} samples")
+
+# Get family details
+family_id = 42
+family_info = client.getFamily(family_id)
+
+# Update family metadata
+client.modifyFamily(
+    family_id=42,
+    family_name="Emotet",
+    is_library=False
+)
+
+# Delete family (optionally keep samples)
+client.deleteFamily(family_id, keep_samples=True)
+```
+
+### Function management
+
+```python
+# Get functions for a sample
+functions = client.getFunctionsBySampleId(12345)
+
+for func in functions:
+    print(f"Function {func['function_id']}: {func['num_instructions']} instructions")
+
+# Get function by ID
+function = client.getFunctionById(67890)
+
+# Get function with XCFG (control flow graph)
+function_with_cfg = client.getFunctionById(67890, with_xcfg=True)
+cfg = function_with_cfg['xcfg']
+```
+
+### Function labeling
+
+Add custom function names and labels.
+
+```python
+# Add function label
+client.addFunctionLabel(
+    function_id=67890,
+    label="decrypt_config",
+    username="analyst"
+)
+
+# Import labels from IDA or other tools
+labels = [
+    {"function_id": 100, "label": "main"},
+    {"function_id": 101, "label": "init_crypto"},
+    {"function_id": 102, "label": "c2_connect"}
+]
+
+for label_info in labels:
+    client.addFunctionLabel(**label_info)
+```
+
+## Maintenance operations
+
+### Index rebuilding
+
+Rebuild the MinHash band index after configuration changes.
+
+```python
+# Schedule index rebuild job
+rebuild_job = client.rebuildIndex()
+
+# Monitor progress
+job_info = client.getJobInfo(rebuild_job['job_id'])
+print(f"Progress: {job_info['progress']}%")
+```
+
+<Warning>
+Index rebuilding can take significant time for large databases (hours for millions of functions). Plan maintenance windows accordingly.
+</Warning>
+
+### Hash recalculation
+
+Recalculate hashes after SMDA or shingler updates.
+
+```python
+# Recalculate all PicHashes
+pichash_job = client.recalculatePicHashes()
+
+# Recalculate all MinHashes
+minhash_job = client.recalculateMinHashes()
+
+# Complete missing MinHashes
+complete_job = client.completeMinHashes()
+```
+
+**When to recalculate:**
+
+- After SMDA version updates
+- After changing shingler weights
+- After modifying MinHash configuration
+- When migrating databases
+
+### Database cleanup
+
+Automatic cleanup of temporary query samples.
+
+```python
+# Manually trigger cleanup
+cleanup_job = client.doDbCleanup()
+
+# Configure automatic cleanup
+# In StorageConfig:
+STORAGE_MONGODB_ENABLE_CLEANUP = True
+STORAGE_MONGODB_CLEANUP_DELTA = 60 * 60 * 24 * 7  # Check weekly
+STORAGE_MONGODB_CLEANUP_TTL = 60 * 60 * 24 * 7     # Delete after 7 days
+```
+
+## Search capabilities
+
+### Advanced search syntax
+
+MCRIT supports powerful search queries for samples, families, and functions.
+
+```python
+# Search samples
+samples = client.searchSamples(
+    query="family:emotet AND architecture:intel.64bit"
+)
+
+# Search families
+families = client.searchFamilies(
+    query="name:*trojan* AND num_samples:>10"
+)
+
+# Search functions
+functions = client.searchFunctions(
+    query="num_instructions:>100 AND num_blocks:<20"
+)
+```
+
+**Search operators:**
+
+| Operator | Description | Example |
+|----------|-------------|----------|
+| `AND` | Logical AND | `family:emotet AND version:2023` |
+| `OR` | Logical OR | `family:emotet OR family:trickbot` |
+| `:` | Field match | `architecture:intel.32bit` |
+| `:<` | Less than | `num_functions:<100` |
+| `:>` | Greater than | `num_instructions:>1000` |
+| `*` | Wildcard | `family:*trojan*` |
+
+### Filtering results
+
+Filter and sort matching results programmatically.
+
+```python
+matches = client.getMatchesForSample(sample_id)
+
+# Filter by score
+filtered = matches.filter(
+    min_score=70,
+    max_score=100
+)
+
+# Filter by sample count
+filtered = matches.filter(
+    min_num_samples=5,
+    max_num_samples=50
+)
+
+# Filter by families
+filtered = matches.filter(
+    include_families=["emotet", "trickbot"],
+    exclude_families=["benign_library"]
+)
+
+# Keep only unique matches
+filtered = matches.filter(unique_only=True)
+```
+
+## Export and import
+
+### Database export
+
+Export all or selected samples for backup or sharing.
+
+```python
+# Export entire database
+export_data = client.exportData()
+
+# Save to file
+import json
+with open('mcrit_export.json', 'w') as f:
+    json.dump(export_data, f)
+
+# Export specific samples
+sample_ids = [100, 101, 102]
+export_data = client.exportDataSelection(sample_ids)
+```
+
+<Warning>
+Exports are limited to 1 GB by default (`STORAGE_MAX_EXPORT_SIZE`) to prevent out-of-memory errors. Adjust configuration for larger exports.
+</Warning>
+
+### Database import
+
+Import previously exported data.
+
+```python
+# Import data
+import json
+with open('mcrit_export.json', 'r') as f:
+    import_data = json.load(f)
+
+import_result = client.importData(import_data)
+print(f"Imported {import_result['num_samples']} samples")
+```
+
+### Respawn (reset database)
+
+Completely clear the database and start fresh.
+
+```python
+# WARNING: This deletes all data!
+result = client.respawn()
+print("Database reset complete")
+```
+
+<Warning>
+The `respawn` operation permanently deletes all samples, functions, and hashes from the database. Use with extreme caution!
+</Warning>
+
+## Job management
+
+### Job monitoring
+
+```python
+# Get all jobs
+jobs = client.getJobs()
+
+# Filter by state
+queued_jobs = client.getJobs(state="queued")
+finished_jobs = client.getJobs(state="finished")
+failed_jobs = client.getJobs(state="failed")
+
+# Get job statistics
+stats = client.getJobStats()
+print(f"Queued: {stats['queued']}")
+print(f"In progress: {stats['in_progress']}")
+print(f"Finished: {stats['finished']}")
+print(f"Failed: {stats['failed']}")
+
+# Get specific job info
+job_id = "507f1f77bcf86cd799439011"
+job = client.getJobInfo(job_id)
+print(f"State: {job['state']}")
+print(f"Progress: {job.get('progress', 0)}%")
+print(f"Method: {job['method']}")
+```
+
+### Job results
+
+```python
+# Get result for completed job
+result = client.getResultForJob(job_id)
+
+# Get job for a result
+job = client.getJobForResult(result_id)
+
+# Wait for job completion (blocking)
+result = client.waitForJobCompletion(job_id, timeout=3600)
+```
+
+### Job deletion
+
+```python
+# Delete specific job
+client.deleteJob(job_id)
+
+# Delete all failed jobs
+failed_jobs = client.getJobs(state="failed")
+for job in failed_jobs:
+    client.deleteJob(job['job_id'])
+```
+
+## Configuration and status
+
+### Server status
+
+```python
+# Get server status
+status = client.getStatus()
+
+print(f"Database state: {status['db_state']}")
+print(f"Storage type: {status['storage_type']}")
+print(f"Samples: {status['num_samples']}")
+print(f"Families: {status['num_families']}")
+print(f"Functions: {status['num_functions']}")
+print(f"PicHashes: {status['num_pichashes']}")
+print(f"Bands: {status['num_bands']}")
+
+# Get version information
+version = client.getVersion()
+print(f"MCRIT version: {version}")
+
+# Get configuration
+config = client.getConfig()
+print(f"MinHash threshold: {config['MINHASH_MATCHING_THRESHOLD']}")
+print(f"Signature length: {config['MINHASH_SIGNATURE_LENGTH']}")
+```
+
+### Performance tuning
+
+Adjust matching parameters for specific queries.
+
+```python
+# Higher threshold = stricter matching
+matches = client.getMatchesForSample(
+    sample_id,
+    minhash_threshold=80  # Only very similar functions
+)
+
+# Lower threshold = more permissive
+matches = client.getMatchesForSample(
+    sample_id,
+    minhash_threshold=30  # Include loosely similar functions
+)
+
+# Require more band matches = faster but less recall
+matches = client.getMatchesForSample(
+    sample_id,
+    band_matches_required=5  # Higher precision
+)
+
+# Adjust PicHash minimum size
+matches = client.getMatchesForSample(
+    sample_id,
+    pichash_size=20  # Only match larger functions
+)
+```
+
+<Tip>
+For malware family clustering, use threshold 50-70. For library detection, use threshold 70-90. For variant hunting, use threshold 30-50.
+</Tip>

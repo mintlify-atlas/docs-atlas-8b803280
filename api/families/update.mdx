@@ -1,0 +1,194 @@
+---
+title: "Update Family"
+description: "Modify family information such as name or library status"
+---
+
+## Endpoint
+
+```
+PUT /families/{family_id}
+```
+
+Update information for an existing family. This endpoint allows you to modify the family name and library status, triggering a recalculation of family statistics.
+
+## Path Parameters
+
+<ParamField path="family_id" type="integer" required>
+  The unique identifier of the family to update.
+</ParamField>
+
+## Request Body
+
+The request body should be a JSON object containing the fields to update. At least one field must be provided.
+
+<ParamField body="family_name" type="string">
+  New name for the family. Must be 0-64 alphanumeric characters with optional single dots, dashes, or underscores in between (but not at the start or end). Pattern: `^(?=[a-zA-Z0-9._\-]{0,64}$)(?!.*[\-_.]{2})[^\-_.].*[^\-_.]$`
+</ParamField>
+
+<ParamField body="is_library" type="boolean">
+  Whether this family should be marked as a library. Accepts boolean values or string representations: `true`, `false`, `"True"`, `"False"`, `"true"`, `"false"`, `0`, `1`.
+</ParamField>
+
+## Response
+
+### Success Response (202 Accepted)
+
+<ResponseField name="status" type="string" required>
+  Status of the request. Returns `"successful"` when the family is successfully modified.
+</ResponseField>
+
+<ResponseField name="data" type="object" required>
+  Success message object.
+  
+  <Expandable title="Success Object">
+    <ResponseField name="message" type="string" required>
+      Success message: "Family modified."
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Error Response (400 Bad Request)
+
+<ResponseField name="status" type="string" required>
+  Status of the request. Returns `"failed"` on error.
+</ResponseField>
+
+<ResponseField name="data" type="object" required>
+  Error details.
+  
+  <Expandable title="Error Object">
+    <ResponseField name="message" type="string" required>
+      Error message describing what went wrong. Possible messages:
+      - "PUT request without body can't be processed."
+      - "family_name may be 0-64 alphanumeric chars with single dots, dashes, underscores inbetween."
+      - "is_library must be boolean."
+      - "Failed to modify family."
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Examples
+
+### Update family name
+
+```bash
+curl -X PUT "http://localhost:8000/families/1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "family_name": "updated_malware_family"
+  }'
+```
+
+<Expandable title="Response (202)">
+```json
+{
+  "status": "successful",
+  "data": {
+    "message": "Family modified."
+  }
+}
+```
+</Expandable>
+
+### Update library status
+
+```bash
+curl -X PUT "http://localhost:8000/families/2" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "is_library": true
+  }'
+```
+
+<Expandable title="Response (202)">
+```json
+{
+  "status": "successful",
+  "data": {
+    "message": "Family modified."
+  }
+}
+```
+</Expandable>
+
+### Update both name and library status
+
+```bash
+curl -X PUT "http://localhost:8000/families/3" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "family_name": "lib_crypto",
+    "is_library": true
+  }'
+```
+
+<Expandable title="Response (202)">
+```json
+{
+  "status": "successful",
+  "data": {
+    "message": "Family modified."
+  }
+}
+```
+</Expandable>
+
+### Error: Invalid family name
+
+```bash
+curl -X PUT "http://localhost:8000/families/1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "family_name": "invalid..name"
+  }'
+```
+
+<Expandable title="Response (400)">
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "family_name may be 0-64 alphanumeric chars with single dots, dashes, underscores inbetween."
+  }
+}
+```
+</Expandable>
+
+### Error: Invalid is_library value
+
+```bash
+curl -X PUT "http://localhost:8000/families/1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "is_library": "invalid"
+  }'
+```
+
+<Expandable title="Response (400)">
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "is_library must be boolean."
+  }
+}
+```
+</Expandable>
+
+### Error: Empty request body
+
+```bash
+curl -X PUT "http://localhost:8000/families/1" \
+  -H "Content-Type: application/json"
+```
+
+<Expandable title="Response (400)">
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "PUT request without body can't be processed."
+  }
+}
+```
+</Expandable>

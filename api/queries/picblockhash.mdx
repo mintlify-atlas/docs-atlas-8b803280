@@ -1,0 +1,226 @@
+---
+title: "Query PicBlockHash"
+description: "Find all basic blocks matching a specific PicBlockHash value"
+---
+
+## Get PicBlockHash Matches
+
+Returns all basic blocks in the database that match a specific PicBlockHash value. PicBlockHash is a position-independent hash for individual basic blocks within functions.
+
+<ParamField path="picblockhash" type="string" required>
+  16-character hexadecimal PicBlockHash value (e.g., "1234567890abcdef")
+</ParamField>
+
+### Request
+
+```bash
+curl -X GET "https://your-server.com/query/picblockhash/1234567890abcdef" \
+  -H "apitoken: YOUR_API_TOKEN"
+```
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request (`successful` or `failed`)
+</ResponseField>
+
+<ResponseField name="data" type="array">
+  Array of matches for the PicBlockHash. Each entry is a tuple containing:
+  
+  <Expandable title="match tuple structure">
+    <ResponseField name="[0]" type="integer">
+      Family ID
+    </ResponseField>
+    <ResponseField name="[1]" type="integer">
+      Sample ID
+    </ResponseField>
+    <ResponseField name="[2]" type="integer">
+      Function ID containing this basic block
+    </ResponseField>
+    <ResponseField name="[3]" type="integer">
+      Basic block offset within the binary
+    </ResponseField>
+    <ResponseField name="[4]" type="integer">
+      Basic block size in bytes
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": [
+    [15, 789, 1023, 8256, 32],
+    [15, 789, 1023, 8320, 28],
+    [15, 790, 1045, 8256, 32],
+    [16, 801, 1100, 4128, 32],
+    [1, 45, 234, 2080, 32]
+  ]
+}
+```
+
+In this example:
+- First match: Family 15, Sample 789, Function 1023, basic block at offset 8256 (32 bytes)
+- Second match: Same function (1023) has another block at 8320 (28 bytes)
+- Third match: Different sample (790) but same family, basic block at 8256 (32 bytes)
+- Fourth match: Different family (16), basic block at offset 4128 (32 bytes)
+- Fifth match: Library code (Family 1), basic block at offset 2080 (32 bytes)
+
+### Error Response
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "No valid PicHash provided."
+  }
+}
+```
+
+Returns HTTP 400 if the PicBlockHash format is invalid (must be exactly 16 hexadecimal characters).
+
+## Get PicBlockHash Summary
+
+Returns aggregated statistics for all basic blocks matching a PicBlockHash value.
+
+<ParamField path="picblockhash" type="string" required>
+  16-character hexadecimal PicBlockHash value (e.g., "1234567890abcdef")
+</ParamField>
+
+### Request
+
+```bash
+curl -X GET "https://your-server.com/query/picblockhash/1234567890abcdef/summary" \
+  -H "apitoken: YOUR_API_TOKEN"
+```
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request (`successful` or `failed`)
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Summary statistics for the PicBlockHash matches
+  
+  <Expandable title="data properties">
+    <ResponseField name="families" type="integer">
+      Number of unique families containing this PicBlockHash
+    </ResponseField>
+    <ResponseField name="samples" type="integer">
+      Number of unique samples containing this PicBlockHash
+    </ResponseField>
+    <ResponseField name="functions" type="integer">
+      Number of unique functions containing this PicBlockHash
+    </ResponseField>
+    <ResponseField name="offsets" type="integer">
+      Total number of basic block instances with this PicBlockHash
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "families": 8,
+    "samples": 156,
+    "functions": 203,
+    "offsets": 487
+  }
+}
+```
+
+This indicates:
+- The PicBlockHash appears in 8 different families
+- Found across 156 unique samples
+- Present in 203 unique functions
+- 487 total basic block instances (same function can have multiple instances)
+
+### Error Response
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "No valid PicHash provided."
+  }
+}
+```
+
+Returns HTTP 400 if the PicBlockHash format is invalid.
+
+## Use Cases
+
+### Fine-Grained Code Analysis
+
+PicBlockHash enables basic block-level analysis:
+
+```bash
+# Find all instances of a specific code pattern
+curl -X GET "https://your-server.com/query/picblockhash/a1b2c3d4e5f6a7b8" \
+  -H "apitoken: YOUR_API_TOKEN"
+```
+
+### Identify Common Code Patterns
+
+Find frequently reused basic blocks across malware families:
+
+```bash
+# Get summary to see how common this block is
+curl -X GET "https://your-server.com/query/picblockhash/1234567890abcdef/summary" \
+  -H "apitoken: YOUR_API_TOKEN"
+```
+
+A high `offsets` count relative to `functions` suggests the block appears multiple times per function (e.g., loop body, error handling).
+
+### Detect Shared Functionality
+
+PicBlockHash is useful for:
+- Finding compiler-generated code patterns
+- Identifying encryption/decryption loops
+- Detecting API call wrappers
+- Locating obfuscation stubs
+- Tracking specific exploit techniques
+
+### Partial Function Matching
+
+While PicHash matches entire functions, PicBlockHash can find similarities when:
+- Functions are modified but core logic remains
+- Only parts of a function are reused
+- Code has been refactored but key blocks are preserved
+
+## PicBlockHash vs PicHash
+
+| Feature | PicHash | PicBlockHash |
+|---------|---------|-------------|
+| Granularity | Entire function | Individual basic block |
+| Use Case | Function-level matching | Fine-grained code pattern detection |
+| Precision | High (exact function match) | Medium (block-level match) |
+| Coverage | Lower (requires full function match) | Higher (can find partial matches) |
+| False Positives | Lower | Higher (common blocks appear often) |
+
+## PicBlockHash Format
+
+PicBlockHash values are:
+- 64-bit hashes represented as 16 hexadecimal characters
+- Case-insensitive (both uppercase and lowercase accepted)
+- Must match the regex pattern: `[a-fA-F0-9]{16}`
+
+Examples of valid PicBlockHash values:
+- `1234567890abcdef`
+- `ABCDEF1234567890`
+- `a1b2c3d4e5f6a7b8`
+- `0000000000000000`
+
+## Performance Considerations
+
+PicBlockHash queries can return large result sets since basic blocks are more common than complete functions. Consider:
+
+- Using the summary endpoint first to check prevalence
+- Filtering results by family or sample if needed
+- Combining with other matching parameters for more specific searches

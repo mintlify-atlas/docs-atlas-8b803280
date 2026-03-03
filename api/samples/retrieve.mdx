@@ -1,0 +1,231 @@
+---
+title: Retrieve Sample
+description: Retrieve detailed information about a specific sample by sample ID or SHA256 hash
+---
+
+## Get Sample by ID
+
+<api-endpoint method="GET" path="/samples/{sample_id}" />
+
+Retrieves detailed information about a specific sample using its sample ID.
+
+### Path Parameters
+
+<ParamField path="sample_id" type="integer" required>
+  Unique identifier of the sample
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request - either "successful" or "failed"
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Complete sample entry information
+  
+  <Expandable title="Sample Entry Fields">
+    <ResponseField name="sample_id" type="integer">
+      Unique identifier for the sample
+    </ResponseField>
+    
+    <ResponseField name="family_id" type="integer">
+      Identifier of the malware family this sample belongs to
+    </ResponseField>
+    
+    <ResponseField name="family" type="string">
+      Name of the malware family
+    </ResponseField>
+    
+    <ResponseField name="sha256" type="string">
+      SHA256 hash of the binary
+    </ResponseField>
+    
+    <ResponseField name="filename" type="string">
+      Original filename of the sample
+    </ResponseField>
+    
+    <ResponseField name="architecture" type="string">
+      CPU architecture (e.g., "intel", "arm")
+    </ResponseField>
+    
+    <ResponseField name="bitness" type="integer">
+      Binary bitness (32 or 64)
+    </ResponseField>
+    
+    <ResponseField name="base_addr" type="integer">
+      Base address of the binary in memory
+    </ResponseField>
+    
+    <ResponseField name="binary_size" type="integer">
+      Size of the binary in bytes
+    </ResponseField>
+    
+    <ResponseField name="binweight" type="float">
+      Binary weight metric used for similarity calculations
+    </ResponseField>
+    
+    <ResponseField name="component" type="string">
+      Component identifier for the sample
+    </ResponseField>
+    
+    <ResponseField name="version" type="string">
+      Version string for the sample
+    </ResponseField>
+    
+    <ResponseField name="is_library" type="boolean">
+      Whether the sample is a library
+    </ResponseField>
+    
+    <ResponseField name="smda_version" type="string">
+      Version of SMDA used for analysis
+    </ResponseField>
+    
+    <ResponseField name="statistics" type="object">
+      Statistical information about the sample (e.g., num_functions, num_instructions)
+    </ResponseField>
+    
+    <ResponseField name="timestamp" type="string">
+      Timestamp when the sample was added (format: YYYY-MM-DDTHH-MM-SS)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+```bash Get sample by ID
+curl -X GET "https://your-mcrit-instance.com/samples/42" \
+  -H "apitoken: your-api-token"
+```
+</CodeGroup>
+
+### Response Example
+
+#### Success
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "sample_id": 42,
+    "family_id": 5,
+    "family": "emotet",
+    "sha256": "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+    "filename": "malware.exe",
+    "architecture": "intel",
+    "bitness": 32,
+    "base_addr": 4194304,
+    "binary_size": 102400,
+    "binweight": 0.85,
+    "component": "loader",
+    "version": "1.0",
+    "is_library": false,
+    "smda_version": "1.9.0",
+    "statistics": {
+      "num_functions": 42,
+      "num_instructions": 1523,
+      "num_blocks": 387
+    },
+    "timestamp": "2024-03-15T14-30-00"
+  }
+}
+```
+
+#### Error (Sample Not Found)
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "We don't have a sample with that id."
+  }
+}
+```
+
+---
+
+## Get Sample by SHA256
+
+<api-endpoint method="GET" path="/samples/sha256/{sample_sha256}" />
+
+Retrieves detailed information about a specific sample using its SHA256 hash.
+
+### Path Parameters
+
+<ParamField path="sample_sha256" type="string" required>
+  SHA256 hash of the sample (64 hexadecimal characters)
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request - either "successful" or "failed"
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Complete sample entry information (same structure as Get Sample by ID)
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+```bash Get sample by SHA256
+curl -X GET "https://your-mcrit-instance.com/samples/sha256/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890" \
+  -H "apitoken: your-api-token"
+```
+</CodeGroup>
+
+### Response Example
+
+#### Success
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "sample_id": 42,
+    "family_id": 5,
+    "family": "emotet",
+    "sha256": "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+    "filename": "malware.exe",
+    "architecture": "intel",
+    "bitness": 32,
+    "base_addr": 4194304,
+    "binary_size": 102400,
+    "binweight": 0.85,
+    "component": "loader",
+    "version": "1.0",
+    "is_library": false,
+    "smda_version": "1.9.0",
+    "statistics": {
+      "num_functions": 42,
+      "num_instructions": 1523,
+      "num_blocks": 387
+    },
+    "timestamp": "2024-03-15T14-30-00"
+  }
+}
+```
+
+#### Error (Invalid SHA256)
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "No valid SHA256 provided."
+  }
+}
+```
+
+#### Error (Sample Not Found)
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "We don't have a sample with that SHA256."
+  }
+}
+```

@@ -1,0 +1,188 @@
+---
+title: Submit Sample
+description: Submit a new sample to MCRIT for analysis, either as a SMDA JSON report or as a binary file
+---
+
+## Submit SMDA Report
+
+<api-endpoint method="POST" path="/samples" />
+
+Submit a sample in SMDA JSON report format for processing and indexing.
+
+### Headers
+
+<ParamField header="username" type="string" default="anonymous">
+  Username to associate with this submission
+</ParamField>
+
+<ParamField header="apitoken" type="string" required>
+  API authentication token
+</ParamField>
+
+### Request Body
+
+<ParamField body="smda_report" type="object" required>
+  A complete SMDA (Smart Malware Disassembly and Analysis) report in JSON format
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request - either "successful" or "failed"
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Summary information about the submitted sample including sample_id and processing details
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+```bash Submit SMDA report
+curl -X POST "https://your-mcrit-instance.com/samples" \
+  -H "Content-Type: application/json" \
+  -H "apitoken: your-api-token" \
+  -H "username: analyst1" \
+  -d @smda_report.json
+```
+</CodeGroup>
+
+### Response Example
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "sample_id": 42,
+    "family_id": 5,
+    "num_functions": 78,
+    "job_id": "abc123"
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "POST request without body can't be processed."
+  }
+}
+```
+
+---
+
+## Submit Binary
+
+<api-endpoint method="POST" path="/samples/binary" />
+
+Submit a binary file directly for automated disassembly with SMDA and indexing. The binary is analyzed and a job is created for processing.
+
+### Query Parameters
+
+<ParamField query="filename" type="string">
+  Original filename of the binary
+</ParamField>
+
+<ParamField query="family" type="string">
+  Malware family name to associate with this sample
+</ParamField>
+
+<ParamField query="version" type="string">
+  Version string for the sample
+</ParamField>
+
+<ParamField query="is_dump" type="boolean" default="false">
+  Whether the binary is a memory dump. Accepts: "True", "true", "1", or 1
+</ParamField>
+
+<ParamField query="base_addr" type="string">
+  Base address in hexadecimal format (e.g., "0x400000"). Only used when is_dump is true.
+</ParamField>
+
+<ParamField query="bitness" type="integer" default="32">
+  Binary bitness. Accepts: 32 or 64
+</ParamField>
+
+### Request Body
+
+Raw binary data (application/octet-stream)
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request - "successful", "failed", or "conflict" (409)
+</ResponseField>
+
+<ResponseField name="data" type="string | object">
+  Job ID if successful, or error message object if failed
+  
+  <Expandable title="Success Response">
+    <ResponseField name="data" type="string">
+      Job ID that can be used to track the processing status
+    </ResponseField>
+  </Expandable>
+  
+  <Expandable title="Error Response">
+    <ResponseField name="data.message" type="string">
+      Error description
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+```bash Submit binary (basic)
+curl -X POST "https://your-mcrit-instance.com/samples/binary?filename=malware.exe&family=emotet" \
+  -H "apitoken: your-api-token" \
+  --data-binary @malware.exe
+```
+
+```bash Submit 64-bit binary
+curl -X POST "https://your-mcrit-instance.com/samples/binary?filename=payload.dll&family=trickbot&version=2.0&bitness=64" \
+  -H "apitoken: your-api-token" \
+  --data-binary @payload.dll
+```
+
+```bash Submit memory dump
+curl -X POST "https://your-mcrit-instance.com/samples/binary?filename=dump.bin&is_dump=true&base_addr=0x400000&bitness=32" \
+  -H "apitoken: your-api-token" \
+  --data-binary @memory_dump.bin
+```
+</CodeGroup>
+
+### Response Examples
+
+#### Success
+
+```json
+{
+  "status": "successful",
+  "data": "job_abc123xyz789"
+}
+```
+
+#### Conflict (Binary Already Exists)
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "Conflict: Binary already exists as sample with ID: 42."
+  }
+}
+```
+
+#### Error
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "POST request without body can't be processed."
+  }
+}
+```

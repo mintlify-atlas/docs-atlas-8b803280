@@ -1,0 +1,167 @@
+---
+title: List Samples
+description: Retrieve a list of all samples or a paginated subset of samples from the MCRIT database
+---
+
+## List All Samples
+
+<api-endpoint method="GET" path="/samples" />
+
+Retrieves a collection of samples from the database with optional pagination support.
+
+### Query Parameters
+
+<ParamField query="start" type="integer" default="0">
+  The starting index for pagination. Defaults to 0 if not specified.
+</ParamField>
+
+<ParamField query="limit" type="integer" default="0">
+  The maximum number of samples to return. 0 means no limit (returns all samples from start index).
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request - either "successful" or "failed"
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Object containing sample entries keyed by sample_id
+  
+  <Expandable title="Sample Entry Fields">
+    <ResponseField name="sample_id" type="integer">
+      Unique identifier for the sample
+    </ResponseField>
+    
+    <ResponseField name="family_id" type="integer">
+      Identifier of the malware family this sample belongs to
+    </ResponseField>
+    
+    <ResponseField name="family" type="string">
+      Name of the malware family
+    </ResponseField>
+    
+    <ResponseField name="sha256" type="string">
+      SHA256 hash of the binary
+    </ResponseField>
+    
+    <ResponseField name="filename" type="string">
+      Original filename of the sample
+    </ResponseField>
+    
+    <ResponseField name="architecture" type="string">
+      CPU architecture (e.g., "intel", "arm")
+    </ResponseField>
+    
+    <ResponseField name="bitness" type="integer">
+      Binary bitness (32 or 64)
+    </ResponseField>
+    
+    <ResponseField name="base_addr" type="integer">
+      Base address of the binary in memory
+    </ResponseField>
+    
+    <ResponseField name="binary_size" type="integer">
+      Size of the binary in bytes
+    </ResponseField>
+    
+    <ResponseField name="binweight" type="float">
+      Binary weight metric
+    </ResponseField>
+    
+    <ResponseField name="component" type="string">
+      Component identifier for the sample
+    </ResponseField>
+    
+    <ResponseField name="version" type="string">
+      Version string for the sample
+    </ResponseField>
+    
+    <ResponseField name="is_library" type="boolean">
+      Whether the sample is a library
+    </ResponseField>
+    
+    <ResponseField name="smda_version" type="string">
+      Version of SMDA used for analysis
+    </ResponseField>
+    
+    <ResponseField name="statistics" type="object">
+      Statistical information about the sample
+    </ResponseField>
+    
+    <ResponseField name="timestamp" type="string">
+      Timestamp when the sample was added (format: YYYY-MM-DDTHH-MM-SS)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+```bash List all samples
+curl -X GET "https://your-mcrit-instance.com/samples" \
+  -H "apitoken: your-api-token"
+```
+
+```bash List with pagination
+curl -X GET "https://your-mcrit-instance.com/samples?start=0&limit=10" \
+  -H "apitoken: your-api-token"
+```
+
+```bash Skip first 20, get next 50
+curl -X GET "https://your-mcrit-instance.com/samples?start=20&limit=50" \
+  -H "apitoken: your-api-token"
+```
+</CodeGroup>
+
+### Response Example
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "1": {
+      "sample_id": 1,
+      "family_id": 5,
+      "family": "emotet",
+      "sha256": "a1b2c3d4e5f6...",
+      "filename": "malware.exe",
+      "architecture": "intel",
+      "bitness": 32,
+      "base_addr": 4194304,
+      "binary_size": 102400,
+      "binweight": 0.85,
+      "component": "loader",
+      "version": "1.0",
+      "is_library": false,
+      "smda_version": "1.9.0",
+      "statistics": {
+        "num_functions": 42,
+        "num_instructions": 1523
+      },
+      "timestamp": "2024-03-15T14-30-00"
+    },
+    "2": {
+      "sample_id": 2,
+      "family_id": 5,
+      "family": "emotet",
+      "sha256": "f6e5d4c3b2a1...",
+      "filename": "payload.dll",
+      "architecture": "intel",
+      "bitness": 64,
+      "base_addr": 140737488355328,
+      "binary_size": 204800,
+      "binweight": 0.92,
+      "component": "payload",
+      "version": "2.0",
+      "is_library": true,
+      "smda_version": "1.9.0",
+      "statistics": {
+        "num_functions": 78,
+        "num_instructions": 3421
+      },
+      "timestamp": "2024-03-15T15-45-00"
+    }
+  }
+}
+```

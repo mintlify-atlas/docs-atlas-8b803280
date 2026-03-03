@@ -1,0 +1,341 @@
+---
+title: Configuration
+description: Configure MCRIT's storage, MinHash parameters, queue settings, and server options
+---
+
+MCRIT's behavior can be customized through various configuration classes located in `mcrit/config/`. This guide covers the main configuration options.
+
+## Configuration Files
+
+MCRIT uses Python dataclasses for configuration, located in:
+
+- `mcrit/config/McritConfig.py` - Main configuration
+- `mcrit/config/StorageConfig.py` - Database and storage settings
+- `mcrit/config/MinHashConfig.py` - MinHash algorithm parameters
+- `mcrit/config/QueueConfig.py` - Job queue configuration
+- `mcrit/config/GunicornConfig.py` - Web server settings
+
+## Main Configuration
+
+### McritConfig
+
+The main configuration class defines global settings:
+
+```python mcrit/config/McritConfig.py
+class McritConfig:
+    VERSION = "1.4.5"
+    
+    # Authentication token for API access (optional)
+    AUTH_TOKEN = ""
+    
+    # Logging configuration
+    LOG_PATH = "./"
+    LOG_LEVEL = logging.INFO
+    LOG_FORMAT = "%(asctime)-15s: %(name)-32s - %(message)s"
+```
+
+### Authentication
+
+To secure your MCRIT instance, set an authentication token:
+
+```python
+AUTH_TOKEN = "your-secret-token-here"
+```
+
+Clients must include this token in the `apitoken` header field when making requests.
+
+## Storage Configuration
+
+### StorageConfig
+
+Controls database connectivity and storage behavior:
+
+```python mcrit/config/StorageConfig.py
+class StorageConfig:
+    # Storage backend ("mongodb" or "memory")
+    STORAGE_METHOD = "mongodb"
+    
+    # MongoDB connection settings
+    STORAGE_SERVER = "127.0.0.1"
+    STORAGE_PORT = "27017"
+    STORAGE_MONGODB_DBNAME = "mcrit"
+    STORAGE_MONGODB_USERNAME = None
+    STORAGE_MONGODB_PASSWORD = None
+    STORAGE_MONGODB_FLAGS = ""
+    
+    # Automatic cleanup of old query results
+    STORAGE_MONGODB_ENABLE_CLEANUP = False
+    STORAGE_MONGODB_CLEANUP_DELTA = 60 * 60 * 24 * 7  # 7 days
+    STORAGE_MONGODB_CLEANUP_TTL = 60 * 60 * 24 * 7    # 7 days
+    
+    # Performance optimizations
+    STORAGE_DROP_DISASSEMBLY = False  # Remove disassembly after MinHash calculation
+    STORAGE_CACHE = False              # Cache banding data in memory
+    
+    # Export limits
+    STORAGE_MAX_EXPORT_SIZE = 1024 * 1024 * 1024  # 1 GB
+```
+
+### MongoDB Authentication
+
+To use MongoDB with authentication:
+
+```python
+STORAGE_MONGODB_USERNAME = "mcrit_user"
+STORAGE_MONGODB_PASSWORD = "secure_password"
+```
+
+### MongoDB Connection Flags
+
+For advanced MongoDB configurations (replica sets, SSL, etc.):
+
+```python
+STORAGE_MONGODB_FLAGS = "?replicaSet=rs0&ssl=true"
+```
+
+### Banding Configuration
+
+MCRIT uses MinHash banding for efficient similarity search:
+
+```python
+# Banding strategy: "random" or "linear"
+STORAGE_BAND_STRATEGY = "random"
+
+# Random seed for band generation
+STORAGE_BAND_SEED = 0xDEADBEEF
+
+# Band configuration: {band_size: number_of_bands}
+STORAGE_BANDS = {4: 20}  # 20 bands of size 4
+```
+
+<Info>
+Changing banding configuration requires rebuilding the index. Use the linear banding strategy for better consistency in future releases.
+</Info>
+
+## MinHash Configuration
+
+### MinHashConfig
+
+Controls the MinHash algorithm behavior:
+
+```python mcrit/config/MinHashConfig.py
+class MinHashConfig:
+    # MinHash calculation strategy
+    MINHASH_STRATEGY = MinHasher.MINHASH_STRATEGY_SEGMENTED
+    
+    # Function filtering thresholds
+    MINHASH_FN_MIN_INS = 10       # Minimum instructions
+    MINHASH_FN_MIN_BLOCKS = 0     # Minimum basic blocks
+    
+    # MinHash signature parameters
+    MINHASH_SIGNATURE_LENGTH = 64  # Number of shingles
+    MINHASH_SIGNATURE_BITS = 8     # Bits per signature element (1-32)
+    MINHASH_SEED = 0xDEADBEEF      # Random seed for MinHash
+    
+    # Matching thresholds
+    MINHASH_MATCHING_THRESHOLD = 50  # Minimum similarity (0-100)
+    BAND_MATCHES_REQUIRED = 2        # Minimum band matches for candidates
+    
+    # PicHash configuration
+    PICHASH_SIZE = 10                      # Minimum function size for PicHash
+    PICHASH_IMPLIES_MINHASH_MATCH = True   # Skip MinHash for PicHash matches
+    
+    # Performance tuning
+    MINHASH_POOL_INDEXING = True           # Use multiprocessing for indexing
+    MINHASH_POOL_MATCHING = True           # Use multiprocessing for matching
+    MINHASH_MATCHING_FUNCTION_BATCH_SIZE = 10000
+    MINHASH_MATCHING_CANDIDATE_WORKPACK_SIZE = 20000
+    MINHASH_GENERATION_WORKPACK_SIZE = 10000
+    MINHASH_BAND_REBUILD_WORK_PACKAGE_SIZE = 100000
+```
+
+### Adjusting Similarity Threshold
+
+To find more or fewer matches, adjust the threshold:
+
+```python
+# More strict matching (fewer, higher quality matches)
+MINHASH_MATCHING_THRESHOLD = 70
+
+# More fuzzy matching (more matches, potentially more false positives)
+MINHASH_MATCHING_THRESHOLD = 30
+```
+
+### Function Filtering
+
+Control which functions are analyzed:
+
+```python
+# Only analyze functions with at least 20 instructions
+MINHASH_FN_MIN_INS = 20
+
+# Or at least 5 basic blocks
+MINHASH_FN_MIN_BLOCKS = 5
+```
+
+### Performance Tuning
+
+Disable multiprocessing if you encounter issues with Gunicorn/Falcon:
+
+```python
+MINHASH_POOL_INDEXING = False
+MINHASH_POOL_MATCHING = False
+```
+
+## Queue Configuration
+
+### QueueConfig
+
+Controls the job queue behavior:
+
+```python mcrit/config/QueueConfig.py
+class QueueConfig:
+    # Queue backend ("mongodb" or "fake")
+    QUEUE_METHOD = "mongodb"
+    
+    # MongoDB connection for queue
+    QUEUE_SERVER = "127.0.0.1"
+    QUEUE_PORT = "27017"
+    QUEUE_MONGODB_DBNAME = "mcrit"
+    QUEUE_MONGODB_USERNAME = None
+    QUEUE_MONGODB_PASSWORD = None
+    QUEUE_MONGODB_FLAGS = ""
+    QUEUE_MONGODB_COLLECTION_NAME = "queue"
+    
+    # Job execution settings
+    QUEUE_TIMEOUT = 300           # Job timeout in seconds
+    QUEUE_MAX_ATTEMPTS = 3        # Maximum retry attempts
+    QUEUE_CLEAN_INTERVAL = 1200   # Cleanup interval (20 minutes)
+    
+    # SpawningWorker timeout for child processes
+    QUEUE_SPAWNINGWORKER_CHILDREN_TIMEOUT = 3600  # 1 hour
+```
+
+### Job Timeout
+
+Adjust the timeout for long-running jobs:
+
+```python
+# Allow jobs to run for up to 30 minutes
+QUEUE_TIMEOUT = 1800
+```
+
+## Web Server Configuration
+
+### GunicornConfig
+
+Configuration for the Gunicorn WSGI server (Linux only):
+
+```python mcrit/config/GunicornConfig.py
+class GunicornConfig:
+    # Enable Gunicorn (Linux only)
+    USE_GUNICORN = False
+    
+    # Server binding
+    BIND = "0.0.0.0:8000"
+    
+    # Worker configuration
+    WORKERS = 4   # Number of worker processes
+    THREADS = 8   # Threads per worker
+    
+    # Timeout for silent workers
+    TIMEOUT = 120  # seconds
+```
+
+### Scaling Gunicorn
+
+For production deployments, increase workers and threads:
+
+```python
+USE_GUNICORN = True
+WORKERS = 8    # Use more workers for CPU-bound tasks
+THREADS = 16   # More threads for I/O-bound tasks
+TIMEOUT = 300  # Longer timeout for complex analyses
+```
+
+<Warning>
+Gunicorn is only available on Linux systems. Windows deployments automatically use Waitress.
+</Warning>
+
+## Configuration Best Practices
+
+### Development Environment
+
+```python
+# Use memory storage for fast testing
+STORAGE_METHOD = "memory"
+
+# Lower thresholds for faster matching
+MINHASH_MATCHING_THRESHOLD = 40
+
+# Smaller batch sizes for debugging
+MINHASH_MATCHING_FUNCTION_BATCH_SIZE = 1000
+```
+
+### Production Environment
+
+```python
+# Use MongoDB for persistence
+STORAGE_METHOD = "mongodb"
+
+# Enable authentication
+AUTH_TOKEN = "production-secret-token"
+
+# Enable cleanup for query samples
+STORAGE_MONGODB_ENABLE_CLEANUP = True
+
+# Drop disassembly to save space
+STORAGE_DROP_DISASSEMBLY = True
+
+# Use Gunicorn for better performance (Linux)
+USE_GUNICORN = True
+WORKERS = 8
+THREADS = 16
+```
+
+### Large-Scale Deployment
+
+```python
+# Enable caching for faster lookups (requires more RAM)
+STORAGE_CACHE = True
+
+# Optimize batch sizes for your workload
+MINHASH_MATCHING_FUNCTION_BATCH_SIZE = 50000
+MINHASH_MATCHING_CANDIDATE_WORKPACK_SIZE = 100000
+
+# Use linear banding for consistency
+STORAGE_BAND_STRATEGY = "linear"
+
+# Increase band matches required to reduce candidates
+BAND_MATCHES_REQUIRED = 3
+```
+
+## Applying Configuration Changes
+
+Configuration changes require restarting the server and workers:
+
+```bash
+# Stop services
+# (Press Ctrl+C in server and worker terminals)
+
+# Restart with new configuration
+mcrit server
+mcrit worker
+```
+
+For Docker deployments:
+
+```bash
+docker-compose restart
+```
+
+<Info>
+Some configuration changes (like banding strategy or MinHash parameters) may require rebuilding the index or recalculating MinHashes for existing samples.
+</Info>
+
+## Next Steps
+
+- Review the [API Reference](/api-reference) for programmatic access
+- Learn about advanced matching techniques
+- Explore database optimization strategies
+- Set up monitoring and logging

@@ -1,0 +1,185 @@
+---
+title: Update Sample
+description: Modify metadata for an existing sample including family name, version, component, and library status
+---
+
+## Update Sample Metadata
+
+<api-endpoint method="PUT" path="/samples/{sample_id}" />
+
+Updates metadata information for an existing sample. This operation triggers recalculation of relevant indexes.
+
+### Path Parameters
+
+<ParamField path="sample_id" type="integer" required>
+  Unique identifier of the sample to update
+</ParamField>
+
+### Request Body
+
+<ParamField body="family_name" type="string">
+  Malware family name. Must be 0-64 alphanumeric characters with single dots, dashes, or underscores in between (not at start/end).
+  
+  Pattern: `^(?=[a-zA-Z0-9._\-]{0,64}$)(?!.*[\-_.]{2})[^\-_.].*[^\-_.]$`
+</ParamField>
+
+<ParamField body="version" type="string">
+  Version string. Must be 1-64 printable characters.
+  
+  Pattern: `^[ -~]{1,64}$`
+</ParamField>
+
+<ParamField body="component" type="string">
+  Component identifier. Must be 1-64 printable characters.
+  
+  Pattern: `^[ -~]{1,64}$`
+</ParamField>
+
+<ParamField body="is_library" type="boolean">
+  Whether the sample is a library. Accepts: boolean, "True", "False", "true", "false", "0", "1", 0, or 1
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request - either "successful" or "failed"
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Result message
+  
+  <Expandable title="Response Fields">
+    <ResponseField name="message" type="string">
+      Description of the result (e.g., "Sample modified." or error description)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+```bash Update family name
+curl -X PUT "https://your-mcrit-instance.com/samples/42" \
+  -H "Content-Type: application/json" \
+  -H "apitoken: your-api-token" \
+  -d '{
+    "family_name": "emotet_v2"
+  }'
+```
+
+```bash Update multiple fields
+curl -X PUT "https://your-mcrit-instance.com/samples/42" \
+  -H "Content-Type: application/json" \
+  -H "apitoken: your-api-token" \
+  -d '{
+    "family_name": "trickbot",
+    "version": "2.1.0",
+    "component": "payload",
+    "is_library": false
+  }'
+```
+
+```bash Mark as library
+curl -X PUT "https://your-mcrit-instance.com/samples/42" \
+  -H "Content-Type: application/json" \
+  -H "apitoken: your-api-token" \
+  -d '{
+    "is_library": true
+  }'
+```
+</CodeGroup>
+
+### Response Examples
+
+#### Success
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "message": "Sample modified."
+  }
+}
+```
+
+#### Error (No Request Body)
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "PUT request without body can't be processed."
+  }
+}
+```
+
+#### Error (Invalid Family Name)
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "family_name may be 0-64 alphanumeric chars with single dots, dashes, underscores inbetween."
+  }
+}
+```
+
+#### Error (Invalid Version)
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "version may be 0-64 printable characters."
+  }
+}
+```
+
+#### Error (Invalid Component)
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "component may be 0-64 printable characters."
+  }
+}
+```
+
+#### Error (Invalid is_library)
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "is_library must be boolean."
+  }
+}
+```
+
+#### Error (Failed to Modify)
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "Failed to modify sample."
+  }
+}
+```
+
+### Validation Rules
+
+#### family_name
+- Length: 0-64 characters
+- Allowed characters: alphanumeric (a-z, A-Z, 0-9), dots (.), dashes (-), underscores (_)
+- Cannot start or end with dot, dash, or underscore
+- Cannot have consecutive special characters
+
+#### version and component
+- Length: 1-64 characters
+- Must be printable ASCII characters (space through tilde: ` -~`)
+
+#### is_library
+- Accepts: `true`, `false`, `"True"`, `"False"`, `"true"`, `"false"`, `"0"`, `"1"`, `0`, `1`
+- Converted to boolean internally

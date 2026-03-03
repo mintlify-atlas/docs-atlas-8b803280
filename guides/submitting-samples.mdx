@@ -1,0 +1,251 @@
+---
+title: Submitting Samples
+description: Learn how to submit binary samples and SMDA reports to MCRIT for analysis
+---
+
+MCRIT supports multiple methods for submitting samples, from individual files to entire malware repositories. All submissions are disassembled using [SMDA](https://github.com/danielplohmann/smda) before MinHash calculation.
+
+## Single File Submission
+
+Submit a single binary file for analysis:
+
+```bash
+mcrit client submit sample_unpacked
+```
+
+**Output:**
+```
+1.039s -> (architecture: intel.32bit, base_addr: 0x10000000): 634 functions
+```
+
+### With Family Name
+
+Associate the sample with a malware family:
+
+```bash
+mcrit client submit sample_unpacked -f some_family
+```
+
+### With Version Information
+
+Include version information:
+
+```bash
+mcrit client submit sample_unpacked -f wannacry -v 2017-05-05
+```
+
+### Memory Dumps
+
+For memory dumps, specify the base address in the filename using the format `0x[0-9a-fA-F]{8,16}`:
+
+```bash
+mcrit client submit sample_dump_0x00400000
+```
+
+MCRIT automatically detects the base address (0x00400000) and processes it as a mapped file.
+
+**Example:**
+```bash
+mcrit client submit --mode file ~/malpedia/win.wannacryptor/vt-2017-05-05/0345782378ee7a8b48c296a120625fd439ed8699ae857c4f84befeb56e727366_dump_0x00400000
+```
+
+**Output:**
+```
+0.906s -> (architecture: intel.32bit, base_addr: 0x00400000): 922 functions
+```
+
+## Directory Submission
+
+<Steps>
+  <Step title="Submit all files in a directory">
+    Process all files in a directory (non-recursive):
+    ```bash
+    mcrit client submit --mode dir ~/samples/wannacry/
+    ```
+
+    **Output:**
+    ```
+    0.763s -> (architecture: intel.32bit, base_addr: 0x00400000): 926 functions
+    0.884s -> (architecture: intel.32bit, base_addr: 0x00400000): 926 functions
+    1.378s -> (architecture: intel.32bit, base_addr: 0x00400000): 165 functions
+    0.830s -> (architecture: intel.32bit, base_addr: 0x00400000): 926 functions
+    ```
+  </Step>
+
+  <Step title="Apply family metadata to all files">
+    ```bash
+    mcrit client submit --mode dir ~/samples/emotet/ -f emotet -v 2024-01
+    ```
+
+    All files in the directory will be tagged with family "emotet" and version "2024-01".
+  </Step>
+
+  <Step title="Filter executables only">
+    Only process PE or ELF files:
+    ```bash
+    mcrit client submit --mode dir ~/samples/ -x
+    ```
+
+    The `-x` flag skips non-executable files.
+  </Step>
+</Steps>
+
+## Recursive Submission
+
+For structured malware repositories with the folder layout `./family_name/version/version/files`:
+
+```bash
+mcrit client submit --mode recursive ~/malware_collection/
+```
+
+MCRIT automatically extracts:
+- **Family name** from the folder structure
+- **Version** from nested folder names
+
+### Mark as Library Code
+
+Tag submissions as library code:
+
+```bash
+mcrit client submit --mode recursive ~/libraries/ -l
+```
+
+## Malpedia Synchronization
+
+Sync the [Malpedia](https://malpedia.caad.fkie.fraunhofer.de/) repository into MCRIT:
+
+<Steps>
+  <Step title="Point to Malpedia root">
+    ```bash
+    mcrit client submit --mode malpedia ~/malpedia
+    ```
+
+    Requirements:
+    - Directory must be named `malpedia`
+    - Must contain `malpedia.bib` file
+  </Step>
+
+  <Step title="Automatic filtering">
+    Only processes:
+    - ELF and PE families (win.*)
+    - Files labeled `_unpacked` or `_dump_0x...`
+    - Files not already in MCRIT
+  </Step>
+
+  <Step title="View processing">
+    **Output:**
+    ```
+    /home/analyst/work/Repositories/malpedia/win.3cx_backdoor/11be1803e2e307b647a8a7e02d128335c448ff741bf06bf52b332e0bbf423b03_unpacked
+    1.625s -> (architecture: intel.64bit, base_addr: 0x180000000): 717 functions
+    /home/analyst/work/Repositories/malpedia/win.8t_dropper/2019-01-23/b541e0e29c34800a067b060d9ee18d8d35c75f056f4246b1ce9561a5441d5a0f_unpacked
+    0.305s -> (architecture: intel.32bit, base_addr: 0x10000000): 213 functions
+    ```
+  </Step>
+
+  <Step title="Re-run for updates">
+    Run the same command again to sync new samples:
+    ```bash
+    mcrit client submit --mode malpedia ~/malpedia
+    ```
+
+    Already-indexed files are automatically skipped based on SHA256.
+  </Step>
+</Steps>
+
+## SMDA Report Submission
+
+Submit pre-generated SMDA reports instead of binaries:
+
+```bash
+mcrit client submit --mode file sample.smda -s
+```
+
+For directories:
+```bash
+mcrit client submit --mode dir ~/smda_reports/ -s
+```
+
+### Generate and Store SMDA Reports
+
+Disassemble and save SMDA reports for later use:
+
+```bash
+mcrit client submit sample.exe -o ./reports/
+```
+
+The SMDA report will be saved as `./reports/<sha256>.smda`.
+
+## Worker-Based Submission
+
+For large batches, spawn workers to parallelize submission:
+
+```bash
+mcrit client submit --mode dir ~/samples/ -w
+```
+
+Each file spawns a subprocess with timeout control:
+```bash
+mcrit client submit --mode malpedia ~/malpedia -w -t 600
+```
+
+The `-t 600` sets a 600-second timeout per file.
+
+## Force Update Metadata
+
+Update family/version/library flags for existing samples:
+
+```bash
+mcrit client submit sample.exe -f new_family -v new_version -u
+```
+
+The `-u` flag forces metadata updates even if the sample exists.
+
+## Environment Variables
+
+Configure server and API token via environment:
+
+```bash
+export MCRIT_CLI_SERVER=http://mcrit.example.com:8000
+export MCRIT_CLI_APITOKEN=your_api_token_here
+
+mcrit client submit sample.exe
+```
+
+Or use a `.env` file in the project root:
+```
+MCRIT_CLI_SERVER=http://mcrit.example.com:8000
+MCRIT_CLI_APITOKEN=your_api_token_here
+```
+
+## Submission Workflow
+
+<Steps>
+  <Step title="Disassembly">
+    SMDA disassembles the binary and extracts functions (Worker.py:157-177).
+  </Step>
+
+  <Step title="Sample Entry Creation">
+    Creates a SampleEntry in MongoDB with metadata (Worker.py:144-147).
+  </Step>
+
+  <Step title="Function Storage">
+    Stores all FunctionEntries with XCFG data (Worker.py:148-149).
+  </Step>
+
+  <Step title="MinHash Calculation">
+    Queues MinHash calculation job for all functions (Worker.py:151-152).
+  </Step>
+
+  <Step title="Index Update">
+    Updates MinHash band indices for fast similarity search (Worker.py:281-326).
+  </Step>
+</Steps>
+
+## Best Practices
+
+- Use `--executables_only` (-x) to avoid processing non-binary files
+- Apply consistent family naming conventions
+- Use version strings for temporal tracking
+- Mark library code with `-l` flag for better match filtering
+- Use worker mode (`-w`) for directories with 100+ files
+- Save SMDA reports (`-o`) for reproducible analysis

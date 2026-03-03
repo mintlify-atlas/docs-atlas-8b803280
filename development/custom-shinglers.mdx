@@ -1,0 +1,293 @@
+---
+title: Creating Custom Shinglers
+description: Learn how to create custom shingler implementations to encode function properties for MinHash-based code similarity analysis
+---
+
+Shinglers are a core component of MCRIT that encode properties of disassembled functions into hashable sequences. By creating custom shinglers, you can extract and compare different characteristics of binary code.
+
+## Understanding Shinglers
+
+A shingler transforms a function into a list of byte sequences that can be hashed and used for MinHash calculation. MCRIT uses these shingles to estimate code similarity.
+
+### The AbstractShingler Interface
+
+All shinglers extend the `AbstractShingler` class located in `mcrit/shinglers/AbstractShingler.py`:
+
+```python
+from abc import abstractmethod
+from mcrit.minhash.MinHash import MinHash
+
+class AbstractShingler:
+    def __init__(self, plugin_name):
+        self._name = plugin_name
+        self._config = {}
+        self._weight = 0
+        self._use_weights = True
+
+    @abstractmethod
+    def _generateByteSequences(self, function_object):
+        """actual logic of the shingle, output is a LIST of 
+        (potentially binary) strings that can be hashed"""
+        raise NotImplementedError
+
+    def process(self, function_object, hash_seed):
+        """generic processor that uses output of private byte 
+        sequence generator and hashes it accordingly."""
+        shingled_sequences = []
+        byte_sequences = self._generateByteSequences(function_object)
+        if not byte_sequences:
+            return [[MinHash.getHashMax()]]
+        shingled_reference = [self.hashShingle(byte_sequence, hash_seed) 
+                             for byte_sequence in byte_sequences]
+        shingled_sequences.append(shingled_reference)
+        if self._use_weights:
+            for index in range(1, self._weight, 1):
+                xored_sequence = [shingle ^ self._config.SHINGLERS_XOR_VALUES[index] 
+                                 for shingle in shingled_reference]
+                shingled_sequences.append(xored_sequence)
+        return shingled_sequences
+
+    def hashShingle(self, shingle, hash_seed=0):
+        """produce a single 32bit UINT hash for a given shingle"""
+        return MinHash.hashData(shingle, hash_seed)
+```
+
+## Creating a Custom Shingler
+
+To create a custom shingler, you need to:
+
+1. Extend `AbstractShingler`
+2. Implement the `_generateByteSequences()` method
+3. Return a list of strings/bytes that represent function characteristics
+
+### Example: EscapedBlockShingler
+
+Here's a real example from MCRIT that creates n-grams from escaped instruction sequences:
+
+```python
+from collections import Counter
+from AbstractShingler import AbstractShingler
+from smda.intel.IntelInstructionEscaper import IntelInstructionEscaper
+
+class EscapedBlockShingler(AbstractShingler):
+    """Build a histogram of all mnemonic groups in the function and hash that."""
+
+    def __init__(self, config, weight=1):
+        super().__init__(__class__.__name__)
+        self._config = config
+        self._weight = weight
+
+    def _escapeInstruction(self, instruction):
+        return (
+            instruction.getMnemonicGroup(IntelInstructionEscaper)
+            + " "
+            + instruction.getEscapedOperands(IntelInstructionEscaper)
+        )
+
+    def _maskInstructions(self, instructions, ngram_size=3):
+        sequences = []
+        escaped_sequence = [self._escapeInstruction(ins) for ins in instructions]
+        if len(instructions) > ngram_size:
+            for index in range(len(escaped_sequence) - ngram_size + 1):
+                escaped_ngram = escaped_sequence[index : index + ngram_size]
+                sequences.append(";".join(sorted(escaped_ngram)))
+        else:
+            sequences.append(";".join(sorted(escaped_sequence)))
+        return sequences
+
+    def _generateByteSequences(self, function_object):
+        blocks_as_sequences = []
+        all_instructions = []
+        for _, block in sorted(function_object.blocks.items()):
+            instructions = [ins for ins in block]
+            masked_instructions = self._maskInstructions(instructions)
+            blocks_as_sequences.extend(masked_instructions)
+            all_instructions.extend(instructions)
+        masked_instructions = self._maskInstructions(all_instructions)
+        masked_instructions = self._relabelNgrams(masked_instructions)
+        return blocks_as_sequences
+```
+
+### Example: FuzzyStatPairShingler
+
+This shingler extracts statistical features with fuzzy bucketing:
+
+```python
+from collections import Counter
+from AbstractShingler import AbstractShingler
+from LogBucket import LogBucket
+from smda.intel.IntelInstructionEscaper import IntelInstructionEscaper
+
+class FuzzyStatPairShingler(AbstractShingler):
+    """Use buckets to introduce fuzziness to CFG stats."""
+
+    def __init__(self, config, weight=1):
+        super().__init__(__class__.__name__)
+        self._config = config
+        self._weight = weight
+        self._log_buckets = LogBucket(
+            self._config.SHINGLER_LOGBUCKETS, 
+            self._config.SHINGLER_LOGBUCKET_RANGE
+        )
+
+    def _create_bucketed_values(self, value, field_name):
+        bucketed = []
+        for bucket in self._log_buckets.getLogBucketRange(value):
+            bucketed.append("{}:{}".format(field_name, bucket))
+        return bucketed
+
+    def _generateByteSequences(self, function_object):
+        # Extract instruction statistics
+        mnemonic_type_count = Counter()
+        for instruction in function_object.getInstructions():
+            mnemonic_type_count[
+                instruction.getMnemonicGroup(IntelInstructionEscaper)
+            ] += 1
+        
+        # Calculate features
+        num_calls = function_object.num_calls
+        stack_size = self._getStackSize(function_object)
+        max_block_size = max([block.length for block in function_object.getBlocks()])
+        
+        fields = {
+            "num_calls": num_calls,
+            "stack_size": stack_size,
+            "max_block_size": max_block_size,
+        }
+        
+        # Create bucketed values for fuzzy matching
+        field_values = []
+        for field_name, value in fields.items():
+            bucket_values = self._create_bucketed_values(value, field_name)
+            field_values.extend(bucket_values)
+        return field_values
+```
+
+## Best Practices
+
+### 1. Choose Meaningful Features
+
+Select features that are:
+- **Stable**: Resistant to minor code changes
+- **Discriminative**: Help distinguish different functions
+- **Normalized**: Generalized across different compilation settings
+
+### 2. Handle Edge Cases
+
+```python
+def _generateByteSequences(self, function_object):
+    # Always check for empty/minimal functions
+    if not function_object.blocks or function_object.num_instructions < 5:
+        return []
+    
+    # Handle missing data gracefully
+    sequences = []
+    for block in function_object.getBlocks():
+        if block and block.instructions:
+            sequences.extend(self._processBlock(block))
+    
+    return sequences
+```
+
+### 3. Add Fuzziness When Appropriate
+
+For robust matching across compiler optimizations:
+
+```python
+def _create_fuzzy_feature(self, value):
+    # Use bucketing for numeric values
+    bucket = self._logbucket(value)
+    return f"feature:{bucket}"
+```
+
+### 4. Weight Configuration
+
+Use the weight parameter to control shingler influence:
+
+```python
+def __init__(self, config, weight=1):
+    super().__init__(__class__.__name__)
+    self._weight = weight  # Higher weight = more influence in MinHash
+```
+
+## Utility Methods
+
+The `AbstractShingler` provides helper methods:
+
+### Log Bucketing
+
+```python
+def _logbucket(self, value):
+    """Convert value to log bucket for fuzzy matching"""
+    if value == 0:
+        return 0
+    return math.ceil(math.log(value, 2))
+
+def _getLogBucketRange(self, value):
+    """Get range of buckets around a value"""
+    log_value = math.log(value, 2) if value > 0 else 0
+    floored_exponent = math.floor(log_value)
+    # ... returns (lower, middle, upper) bucket values
+```
+
+## Integrating Your Shingler
+
+### 1. Add to ShinglerConfig
+
+Register your shingler in `mcrit/config/ShinglerConfig.py`:
+
+```python
+from mcrit.shinglers.MyCustomShingler import MyCustomShingler
+
+class ShinglerConfig(ConfigInterface):
+    def _createDefaultShinglers(self):
+        return [
+            EscapedBlockShingler(self, weight=1),
+            FuzzyStatPairShingler(self, weight=1),
+            MyCustomShingler(self, weight=1),  # Add your shingler
+        ]
+```
+
+### 2. Test Your Shingler
+
+```python
+from mcrit.config.ShinglerConfig import ShinglerConfig
+from smda.Disassembler import Disassembler
+
+# Disassemble a binary
+disasm = Disassembler()
+report = disasm.disassembleFile("/path/to/binary")
+
+# Test your shingler
+config = ShinglerConfig()
+shingler = MyCustomShingler(config, weight=1)
+
+for function in report.getFunctions():
+    sequences = shingler._generateByteSequences(function)
+    print(f"Function {function.function_name}: {len(sequences)} sequences")
+```
+
+## Performance Considerations
+
+- **Sequence count**: More sequences = more hashes = longer processing time
+- **Computation complexity**: Keep `_generateByteSequences()` efficient
+- **Memory usage**: Large functions can generate many sequences
+
+```python
+def _generateByteSequences(self, function_object):
+    # Limit sequence generation for very large functions
+    if function_object.num_instructions > 10000:
+        # Sample or simplify for huge functions
+        return self._generateSampledSequences(function_object)
+    return self._generateFullSequences(function_object)
+```
+
+## Examples from MCRIT
+
+MCRIT includes several production shinglers:
+
+- **EscapedBlockShingler**: N-grams of escaped instruction sequences
+- **FuzzyStatPairShingler**: Statistical features with log bucketing
+- **LogBucket**: Utility for creating fuzzy numeric ranges
+
+Study these implementations in `mcrit/shinglers/` for production-ready patterns.

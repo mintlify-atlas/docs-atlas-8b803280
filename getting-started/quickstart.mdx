@@ -1,0 +1,250 @@
+---
+title: Quickstart
+description: Get started with MCRIT in minutes - from installation to your first code similarity analysis
+---
+
+This guide will walk you through starting MCRIT and performing your first code similarity analysis.
+
+## Prerequisites
+
+Before starting, ensure you have either:
+- Completed the [standalone installation](/getting-started/installation), or
+- Set up MCRIT using [Docker](/getting-started/docker-setup)
+
+## Starting MCRIT
+
+MCRIT consists of two main components that need to be running:
+
+<Steps>
+  <Step title="Start the MCRIT server">
+    The server provides the REST API interface:
+    
+    <CodeGroup>
+    ```bash Standalone
+    mcrit server
+    ```
+    
+    ```bash Docker
+    # Server starts automatically with docker-compose
+    docker-compose up -d mcrit-server
+    ```
+    </CodeGroup>
+    
+    By default, the REST API will be listening on [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
+    
+    <Info>
+    On Linux systems with gunicorn installed, you can use `mcrit server --gunicorn` for better performance.
+    </Info>
+  </Step>
+
+  <Step title="Start the MCRIT worker">
+    The worker processes queued jobs. Open a separate terminal and run:
+    
+    <CodeGroup>
+    ```bash Standalone
+    mcrit worker
+    ```
+    
+    ```bash Docker
+    # Worker starts automatically with docker-compose
+    docker-compose up -d mcrit-worker
+    ```
+    </CodeGroup>
+    
+    <Info>
+    For better isolation and stability, you can use `mcrit spawningworker` instead, which spawns child processes for job execution.
+    </Info>
+  </Step>
+
+  <Step title="Verify the installation">
+    Check the server status using the CLI:
+    
+    ```bash
+    mcrit client status
+    ```
+    
+    You should see output showing the database state and statistics:
+    
+    ```json
+    {
+      "status": {
+        "db_state": 187,
+        "storage_type": "mongodb",
+        "num_bands": 20,
+        "num_samples": 0,
+        "num_families": 0,
+        "num_functions": 0,
+        "num_pichashes": 0
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Your First Analysis
+
+<Steps>
+  <Step title="Submit a sample">
+    Submit a binary file for analysis. MCRIT supports PE (Windows) and ELF (Linux) binaries:
+    
+    ```bash
+    mcrit client submit /path/to/binary -f malware_family_name
+    ```
+    
+    MCRIT will automatically:
+    - Disassemble the binary using SMDA
+    - Extract functions and calculate MinHashes
+    - Store the results in the database
+    
+    Example output:
+    ```
+    1.039s -> (architecture: intel.32bit, base_addr: 0x10000000): 634 functions
+    ```
+  </Step>
+
+  <Step title="Submit additional samples">
+    For meaningful similarity analysis, submit more samples:
+    
+    ```bash
+    mcrit client submit /path/to/another_binary -f another_family
+    mcrit client submit /path/to/variant -f malware_family_name
+    ```
+  </Step>
+
+  <Step title="Query for matches">
+    Query a new binary against the database to find similar code:
+    
+    ```bash
+    mcrit client query /path/to/unknown_binary
+    ```
+    
+    This will:
+    - Analyze the binary
+    - Compare it against all stored samples
+    - Return matching functions with similarity scores
+  </Step>
+
+  <Step title="View status and statistics">
+    Check the current database statistics:
+    
+    ```bash
+    mcrit client status
+    ```
+    
+    This shows:
+    - Number of samples stored
+    - Number of families
+    - Total functions indexed
+    - Number of unique PicHashes
+  </Step>
+</Steps>
+
+## Working with SMDA Reports
+
+If you already have SMDA disassembly reports (`.smda` files), you can submit them directly:
+
+```bash
+mcrit client submit /path/to/report.smda -f family_name
+```
+
+This is faster than submitting binaries since the disassembly step is skipped.
+
+## Using Environment Variables
+
+For easier CLI usage, you can set environment variables or create a `.env` file:
+
+```bash .env
+MCRIT_CLI_SERVER=http://localhost:8000
+MCRIT_CLI_APITOKEN=your_api_token_here
+```
+
+With these set, you don't need to specify the server URL or API token with each command.
+
+## CLI Examples
+
+### Submit with Custom Parameters
+
+```bash
+# Submit with specific family name
+mcrit client submit sample.exe -f emotet
+
+# Submit with version information
+mcrit client submit sample.exe -f emotet -v 2023.01
+```
+
+### Query Variations
+
+```bash
+# Query a binary file
+mcrit client query unknown.exe
+
+# Query an SMDA report
+mcrit client query report.smda
+```
+
+### Batch Submissions
+
+```bash
+# Submit all files in a directory
+for file in /path/to/samples/*; do
+  mcrit client submit "$file" -f family_name
+done
+```
+
+## Worker Types
+
+MCRIT offers different worker types for different use cases:
+
+### Standard Worker
+
+```bash
+mcrit worker
+```
+
+Processes jobs in the main process. Suitable for most deployments.
+
+### Spawning Worker
+
+```bash
+mcrit spawningworker
+```
+
+Spawns child processes for job execution, reducing issues with locked memory allocations. Recommended for production.
+
+### Single Job Worker
+
+```bash
+mcrit singlejobworker --job_id <job_id>
+```
+
+Processes a specific job. Useful for debugging or distributed processing.
+
+## Advanced Options
+
+### Profiling
+
+Enable profiling for performance analysis:
+
+```bash
+mcrit server --profile
+mcrit worker --profile
+```
+
+Profile results are saved to the `profiler/` directory.
+
+### Gunicorn on Linux
+
+For better performance on Linux:
+
+```bash
+mcrit server --gunicorn
+```
+
+This uses Gunicorn as the WSGI server instead of Waitress.
+
+## Next Steps
+
+- Learn about [Configuration](/getting-started/configuration) options to customize MCRIT
+- Explore the API documentation for programmatic access
+- Check the CLI documentation for advanced usage
+- Set up the IDA plugin for interactive analysis

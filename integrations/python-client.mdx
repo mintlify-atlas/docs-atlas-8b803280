@@ -1,0 +1,617 @@
+---
+title: Python Client
+description: Use the McritClient Python library to interact with MCRIT programmatically
+---
+
+The MCRIT Python client provides a complete interface to interact with the MCRIT server through its REST API. This module enables you to submit samples, query matches, manage families, and retrieve results programmatically.
+
+## Installation
+
+The client is included in the MCRIT package:
+
+```bash
+pip install mcrit
+```
+
+## Quick Start
+
+<Steps>
+  <Step title="Initialize the client">
+    Create a client instance with your server URL and optional authentication:
+
+    ```python
+    from mcrit.client.McritClient import McritClient
+
+    # Connect to MCRIT server
+    client = McritClient(
+        mcrit_server="http://localhost:8000",
+        apitoken="your-api-token",
+        username="analyst"
+    )
+    ```
+  </Step>
+
+  <Step title="Submit a sample">
+    Submit binary samples or SMDA reports for analysis:
+
+    ```python
+    from smda.Disassembler import Disassembler
+
+    # Disassemble and submit
+    disassembler = Disassembler()
+    report = disassembler.disassembleFile("/path/to/sample.exe")
+    sample_entry, job_id = client.addReport(report)
+
+    print(f"Sample ID: {sample_entry.sample_id}")
+    print(f"Job ID: {job_id}")
+    ```
+  </Step>
+
+  <Step title="Query for matches">
+    Request matches against the database:
+
+    ```python
+    # Query with SMDA report
+    job_id = client.requestMatchesForSmdaReport(
+        report,
+        minhash_threshold=0.7
+    )
+
+    # Wait for results
+    result = client.awaitResult(job_id, sleep_time=2)
+    print(f"Found matches: {len(result)}")
+    ```
+  </Step>
+</Steps>
+
+## Client Configuration
+
+### Initialization Parameters
+
+<ParamField path="mcrit_server" type="string" default="http://localhost:8000">
+  The URL of the MCRIT server to connect to
+</ParamField>
+
+<ParamField path="apitoken" type="string" optional>
+  API token for authentication (sent in headers)
+</ParamField>
+
+<ParamField path="username" type="string" optional>
+  Username for tracking operations
+</ParamField>
+
+<ParamField path="raw_responses" type="boolean" default="false">
+  Return raw HTTP responses instead of parsed data
+</ParamField>
+
+### Dynamic Configuration
+
+```python
+# Update credentials after initialization
+client.setApitoken("new-token")
+client.setUsername("new-user")
+```
+
+## Core Operations
+
+### Sample Management
+
+<CodeGroup>
+```python Submit Binary
+# Submit raw binary with metadata
+with open("malware.exe", "rb") as f:
+    binary = f.read()
+
+result = client.addBinarySample(
+    binary,
+    filename="malware.exe",
+    family="emotet",
+    version="2023.01",
+    is_dump=False
+)
+```
+
+```python Get Sample
+# Retrieve sample by ID
+sample = client.getSampleById(sample_id=42)
+print(f"Family: {sample.family}")
+print(f"SHA256: {sample.sha256}")
+
+# Get sample by SHA256
+sample = client.getSampleBySha256(
+    "a1b2c3d4e5f6..."
+)
+```
+
+```python List Samples
+# Get all samples (with pagination)
+samples = client.getSamples(
+    start=0,
+    limit=100
+)
+
+for sample_id, sample in samples.items():
+    print(f"{sample_id}: {sample.filename}")
+```
+
+```python Modify Sample
+# Update sample metadata
+client.modifySample(
+    sample_id=42,
+    family_name="emotet",
+    version="2023.02",
+    is_library=False
+)
+```
+
+```python Delete Sample
+# Remove sample from database
+client.deleteSample(sample_id=42)
+```
+</CodeGroup>
+
+### Family Management
+
+<CodeGroup>
+```python Get Families
+# Retrieve all families
+families = client.getFamilies()
+
+for family_id, family in families.items():
+    print(f"{family.family_name}: {len(family.samples)} samples")
+```
+
+```python Get Family Details
+# Get specific family with samples
+family = client.getFamily(
+    family_id=5,
+    with_samples=True
+)
+
+print(f"Family: {family.family_name}")
+for sample in family.samples:
+    print(f"  - {sample.filename}")
+```
+
+```python Modify Family
+# Update family metadata
+client.modifyFamily(
+    family_id=5,
+    family_name="emotet_new",
+    is_library=True
+)
+```
+
+```python Delete Family
+# Delete family (optionally keep samples)
+client.deleteFamily(
+    family_id=5,
+    keep_samples=True
+)
+```
+</CodeGroup>
+
+### Function Operations
+
+<CodeGroup>
+```python Get Functions
+# Get functions for a sample
+functions = client.getFunctionsBySampleId(
+    sample_id=42
+)
+
+for func in functions:
+    print(f"0x{func.offset:08x}: {func.num_instructions} instructions")
+```
+
+```python Get Function by ID
+# Retrieve specific function
+function = client.getFunctionById(
+    function_id=1234,
+    with_xcfg=True
+)
+
+print(f"MinHash: {function.minhash}")
+print(f"PicHash: 0x{function.pichash:016x}")
+```
+
+```python Batch Get Functions
+# Get multiple functions efficiently
+function_ids = [100, 101, 102, 103]
+functions = client.getFunctionsByIds(
+    function_ids,
+    with_label_only=False
+)
+```
+</CodeGroup>
+
+### Matching Operations
+
+<CodeGroup>
+```python Query Sample
+# Match existing sample against database
+job_id = client.requestMatchesForSample(
+    sample_id=42,
+    minhash_threshold=0.75,
+    pichash_size=8,
+    force_recalculation=False
+)
+
+result = client.awaitResult(job_id)
+```
+
+```python Query Binary (Unmapped)
+# Match raw binary file
+with open("unknown.exe", "rb") as f:
+    binary = f.read()
+
+job_id = client.requestMatchesForUnmappedBinary(
+    binary,
+    minhash_threshold=0.8,
+    disassemble_locally=True
+)
+
+result = client.awaitResult(job_id)
+```
+
+```python Query Binary (Mapped)
+# Match memory dump with base address
+with open("dump.bin", "rb") as f:
+    binary = f.read()
+
+job_id = client.requestMatchesForMappedBinary(
+    binary,
+    base_address=0x400000,
+    minhash_threshold=0.7,
+    disassemble_locally=True
+)
+
+result = client.awaitResult(job_id)
+```
+
+```python Cross Matching
+# Match samples against each other
+sample_ids = [10, 11, 12, 13]
+
+job_id = client.requestMatchesCross(
+    sample_ids,
+    sample_group_only=True,
+    minhash_threshold=0.7
+)
+
+result = client.awaitResult(job_id)
+```
+
+```python Function Matching
+# Match single function
+from smda.common.SmdaReport import SmdaReport
+
+# Report with single function
+smda_report = SmdaReport(...)
+
+matches = client.getMatchesForSmdaFunction(
+    smda_report,
+    minhash_threshold=0.8,
+    exclude_self_matches=True
+)
+```
+
+```python PicHash Query
+# Find functions by PicHash
+matches = client.getMatchesForPicHash(
+    pichash=0x1234567890abcdef,
+    summary=True
+)
+
+for match in matches:
+    print(f"Function {match['function_id']} in {match['sample_id']}")
+```
+</CodeGroup>
+
+### Job & Queue Management
+
+<CodeGroup>
+```python Monitor Jobs
+# Get queue statistics
+stats = client.getQueueStatistics(with_refresh=True)
+print(f"Pending: {stats['num_jobs_pending']}")
+print(f"Running: {stats['num_jobs_running']}")
+
+# Get job details
+job = client.getJobData(job_id)
+print(f"Status: {job.state}")
+print(f"Progress: {job.progress}")
+```
+
+```python Filter Jobs
+# Get jobs by criteria
+jobs = client.getQueueData(
+    start=0,
+    limit=50,
+    method="matching",
+    state="finished",
+    ascending=False
+)
+
+for job in jobs:
+    print(f"{job.job_id}: {job.parameters}")
+```
+
+```python Get Results
+# Retrieve job result
+result = client.getResultForJob(
+    job_id,
+    compact=True
+)
+
+# Get result by ID
+result = client.getResult(
+    result_id="abc123",
+    compact=False
+)
+```
+
+```python Clean Up Jobs
+import datetime
+
+# Delete old jobs
+client.deleteQueueData(
+    method="matching",
+    finished_before=datetime.datetime(2023, 1, 1)
+)
+
+# Delete specific job
+client.deleteJob(job_id)
+```
+</CodeGroup>
+
+### Search Operations
+
+<Tabs>
+  <Tab title="Search Families">
+    ```python
+    # Search families by name
+    results = client.search_families(
+        search_term="emotet",
+        cursor=None,
+        is_ascending=True,
+        limit=50
+    )
+
+    for family_id, family in results["search_results"].items():
+        print(f"{family_id}: {family['family_name']}")
+
+    # Pagination
+    next_cursor = results["cursor"]["forward"]
+    if next_cursor:
+        next_results = client.search_families(
+            search_term="emotet",
+            cursor=next_cursor
+        )
+    ```
+  </Tab>
+
+  <Tab title="Search Samples">
+    ```python
+    # Search samples by various fields
+    results = client.search_samples(
+        search_term="malware",
+        sort_by="sha256",
+        is_ascending=False,
+        limit=100
+    )
+
+    for sample_id, sample in results["search_results"].items():
+        print(f"{sample['filename']}: {sample['sha256'][:8]}")
+    ```
+  </Tab>
+
+  <Tab title="Search Functions">
+    ```python
+    # Search functions by label or characteristics
+    results = client.search_functions(
+        search_term="decrypt",
+        limit=200
+    )
+
+    for function_id, func in results["search_results"].items():
+        print(f"0x{func['offset']:08x} - {func['function_name']}")
+    ```
+  </Tab>
+</Tabs>
+
+### Import/Export
+
+<CodeGroup>
+```python Export Data
+# Export specific samples
+export_data = client.getExportData(
+    sample_ids=[1, 2, 3, 4],
+    compress_data=True
+)
+
+import json
+with open("export.mcrit", "w") as f:
+    json.dump(export_data, f)
+
+# Export all data
+full_export = client.getExportData(
+    sample_ids=None,
+    compress_data=True
+)
+```
+
+```python Import Data
+import json
+
+# Import previously exported data
+with open("export.mcrit", "r") as f:
+    import_data = json.load(f)
+
+result = client.addImportData(import_data)
+print(f"Imported {result['num_samples_imported']} samples")
+print(f"Imported {result['num_functions_imported']} functions")
+```
+</CodeGroup>
+
+### System Status
+
+```python
+# Get server status
+status = client.getStatus(with_pichash=True)
+print(f"Storage: {status['status']['storage_type']}")
+print(f"Families: {status['status']['num_families']}")
+print(f"Samples: {status['status']['num_samples']}")
+print(f"Functions: {status['status']['num_functions']}")
+print(f"PicHashes: {status['status']['num_pichashes']}")
+
+# Get version
+version = client.getVersion()
+print(f"MCRIT version: {version}")
+```
+
+## Advanced Features
+
+### Unique Blocks Analysis
+
+```python
+# Find unique blocks in samples
+result = client.requestUniqueBlocksForSamples(
+    sample_ids=[10, 11, 12]
+)
+
+for sample_id, blocks in result.items():
+    print(f"Sample {sample_id}: {len(blocks)} unique blocks")
+
+# Find unique blocks for a family
+result = client.requestUniqueBlocksForFamily(
+    family_id=5
+)
+```
+
+### Maintenance Operations
+
+```python
+# Recalculate MinHashes
+client.recalculateMinHashes()
+
+# Recalculate PicHashes
+client.recalculatePicHashes()
+
+# Rebuild index
+client.rebuildIndex()
+
+# Complete missing MinHashes
+client.completeMinhashes()
+
+# Restart worker processes
+client.respawn()
+```
+
+## Error Handling
+
+```python
+from mcrit.client.McritClient import JobTerminatedError
+
+try:
+    # Submit sample
+    sample_entry, job_id = client.addReport(report)
+    
+    # Wait for result
+    result = client.awaitResult(job_id, sleep_time=2)
+    
+except JobTerminatedError:
+    print("Job was terminated before completion")
+    
+except ConnectionError:
+    print("Failed to connect to MCRIT server")
+    
+except Exception as e:
+    print(f"Error: {e}")
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use environment variables for credentials">
+    Store sensitive credentials securely:
+
+    ```python
+    import os
+
+    client = McritClient(
+        mcrit_server=os.getenv("MCRIT_SERVER", "http://localhost:8000"),
+        apitoken=os.getenv("MCRIT_APITOKEN"),
+        username=os.getenv("MCRIT_USERNAME")
+    )
+    ```
+  </Accordion>
+
+  <Accordion title="Handle long-running jobs properly">
+    Monitor job progress and handle timeouts:
+
+    ```python
+    import time
+
+    job_id = client.requestMatchesForSample(sample_id=42)
+    
+    # Poll with timeout
+    max_wait = 300  # 5 minutes
+    elapsed = 0
+    
+    while elapsed < max_wait:
+        job = client.getJobData(job_id)
+        
+        if job.is_finished:
+            result = client.getResultForJob(job_id)
+            break
+        
+        if job.is_failed:
+            raise Exception(f"Job failed: {job.parameters}")
+        
+        print(f"Progress: {job.progress}%")
+        time.sleep(5)
+        elapsed += 5
+    ```
+  </Accordion>
+
+  <Accordion title="Batch operations for efficiency">
+    Use batch methods when processing multiple items:
+
+    ```python
+    # Instead of multiple individual calls
+    # Bad:
+    # for fid in function_ids:
+    #     func = client.getFunctionById(fid)
+    
+    # Good:
+    functions = client.getFunctionsByIds(function_ids)
+    ```
+  </Accordion>
+
+  <Accordion title="Use raw responses for debugging">
+    Enable raw responses to debug API issues:
+
+    ```python
+    client = McritClient(
+        mcrit_server="http://localhost:8000",
+        raw_responses=True
+    )
+
+    response = client.getSampleById(42)
+    print(f"Status: {response.status_code}")
+    print(f"Body: {response.text}")
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CLI Tool" icon="terminal" href="/integrations/cli">
+    Use the command-line interface for quick operations
+  </Card>
+  <Card title="IDA Plugin" icon="code" href="/integrations/ida-plugin">
+    Integrate MCRIT directly into IDA Pro
+  </Card>
+</CardGroup>

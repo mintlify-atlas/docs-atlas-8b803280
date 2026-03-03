@@ -1,0 +1,366 @@
+---
+title: Export & Import
+description: Export and import MCRIT data for backup, migration, or sharing
+---
+
+## Export All Data
+
+<CodeGroup>
+```bash curl
+curl -X GET https://your-mcrit-instance.com/export \
+  -H "apitoken: YOUR_API_TOKEN" \
+  -o mcrit_export.json
+```
+
+```bash Compressed
+curl -X GET https://your-mcrit-instance.com/export?compress=true \
+  -H "apitoken: YOUR_API_TOKEN" \
+  -o mcrit_export.json
+```
+</CodeGroup>
+
+Exports all families, samples, and functions from the MCRIT instance.
+
+<ParamField query="compress" type="boolean" default="false">
+  Compress the exported function data using gzip and base64 encoding. Recommended for large exports.
+</ParamField>
+
+<ResponseExample>
+```json Response
+{
+  "status": "successful",
+  "data": {
+    "content": {
+      "is_compressed": false,
+      "num_families": 10,
+      "num_samples": 100,
+      "num_functions": 5000
+    },
+    "config": {
+      "version": "1.3.0",
+      "shingler": "a3b2c1d4e5f6",
+      "minhash": "f6e5d4c3b2a1"
+    },
+    "family_mapping": {
+      "1": "emotet",
+      "2": "trickbot",
+      "3": "ryuk"
+    },
+    "sample_entries": {
+      "abc123...": {
+        "sample_id": 1,
+        "sha256": "abc123...",
+        "filename": "malware.exe",
+        "family_id": 1,
+        "family": "emotet",
+        "version": "v1.0",
+        "component": "loader",
+        "is_library": false,
+        "architecture": "x86",
+        "bitness": 32,
+        "statistics": {
+          "num_functions": 50,
+          "num_instructions": 2500
+        }
+      }
+    },
+    "function_entries": {
+      "abc123...": {
+        "1": {
+          "function_id": 1,
+          "sample_id": 1,
+          "offset": 4096,
+          "function_name": "main",
+          "num_instructions": 145,
+          "num_blocks": 12,
+          "minhash": [123, 456, 789],
+          "pichash": "deadbeef"
+        }
+      }
+    }
+  }
+}
+```
+</ResponseExample>
+
+<Expandable title="Response Fields">
+  <ResponseField name="status" type="string">
+    Request status ("successful" or "failed")
+  </ResponseField>
+  
+  <ResponseField name="data.content" type="object">
+    Export metadata
+    
+    <Expandable title="Content Object">
+      <ResponseField name="is_compressed" type="boolean">
+        Whether function entries are compressed
+      </ResponseField>
+      
+      <ResponseField name="num_families" type="integer">
+        Number of families in export
+      </ResponseField>
+      
+      <ResponseField name="num_samples" type="integer">
+        Number of samples in export
+      </ResponseField>
+      
+      <ResponseField name="num_functions" type="integer">
+        Number of functions in export
+      </ResponseField>
+    </Expandable>
+  </ResponseField>
+  
+  <ResponseField name="data.config" type="object">
+    Configuration hashes for compatibility checking
+    
+    <Expandable title="Config Object">
+      <ResponseField name="version" type="string">
+        MCRIT version that created the export
+      </ResponseField>
+      
+      <ResponseField name="shingler" type="string">
+        Hash of shingler configuration
+      </ResponseField>
+      
+      <ResponseField name="minhash" type="string">
+        Hash of MinHash configuration
+      </ResponseField>
+    </Expandable>
+  </ResponseField>
+  
+  <ResponseField name="data.family_mapping" type="object">
+    Map of family IDs to family names
+  </ResponseField>
+  
+  <ResponseField name="data.sample_entries" type="object">
+    Map of SHA256 hashes to sample entry objects
+  </ResponseField>
+  
+  <ResponseField name="data.function_entries" type="object">
+    Map of SHA256 hashes to function entry objects (or compressed strings if compress=true)
+  </ResponseField>
+</Expandable>
+
+<Warning>
+  Exports are limited by the `STORAGE_MAX_EXPORT_SIZE` configuration (default: 1GB). If exceeded, the API returns a memory error.
+</Warning>
+
+<ResponseExample>
+```json Memory Error
+{
+  "status": "failed",
+  "data": {
+    "message": "Export exceeded assigned maximum memory limit and was cancelled."
+  }
+}
+```
+</ResponseExample>
+
+---
+
+## Export Selected Samples
+
+<CodeGroup>
+```bash curl
+curl -X GET https://your-mcrit-instance.com/export/1,2,3,4,5 \
+  -H "apitoken: YOUR_API_TOKEN" \
+  -o mcrit_export_selection.json
+```
+
+```bash Compressed
+curl -X GET https://your-mcrit-instance.com/export/1,2,3,4,5?compress=true \
+  -H "apitoken: YOUR_API_TOKEN" \
+  -o mcrit_export_selection.json
+```
+</CodeGroup>
+
+Exports specific samples by their IDs.
+
+<ParamField path="comma_separated_sample_ids" type="string" required>
+  Comma-separated list of sample IDs to export (e.g., "1,2,3,4,5")
+</ParamField>
+
+<ParamField query="compress" type="boolean" default="false">
+  Compress the exported function data
+</ParamField>
+
+<ResponseExample>
+```json Response
+{
+  "status": "successful",
+  "data": {
+    "content": {
+      "is_compressed": false,
+      "num_families": 2,
+      "num_samples": 5,
+      "num_functions": 250
+    },
+    "config": {
+      "version": "1.3.0",
+      "shingler": "a3b2c1d4e5f6",
+      "minhash": "f6e5d4c3b2a1"
+    },
+    "family_mapping": {
+      "1": "emotet",
+      "2": "trickbot"
+    },
+    "sample_entries": {},
+    "function_entries": {}
+  }
+}
+```
+</ResponseExample>
+
+<Info>
+  The sample IDs must be provided as a comma-separated string in the URL path. Whitespace around commas is allowed.
+</Info>
+
+---
+
+## Import Data
+
+<CodeGroup>
+```bash curl
+curl -X POST https://your-mcrit-instance.com/import \
+  -H "apitoken: YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @mcrit_export.json
+```
+
+```python Python
+import requests
+import json
+
+with open('mcrit_export.json', 'r') as f:
+    export_data = json.load(f)
+
+response = requests.post(
+    'https://your-mcrit-instance.com/import',
+    headers={'apitoken': 'YOUR_API_TOKEN'},
+    json=export_data
+)
+
+print(response.json())
+```
+</CodeGroup>
+
+<ParamField body="data" type="object" required>
+  The export data object from a previous export operation. Must include `content`, `config`, `family_mapping`, `sample_entries`, and `function_entries`.
+</ParamField>
+
+<ResponseExample>
+```json Response
+{
+  "status": "successful",
+  "data": {
+    "num_samples_imported": 95,
+    "num_samples_skipped": 5,
+    "num_functions_imported": 4750,
+    "num_functions_skipped": 250
+  }
+}
+```
+</ResponseExample>
+
+<ResponseExample>
+```json No POST Body
+{
+  "status": "failed",
+  "data": {
+    "message": "POST request without body can't be processed."
+  }
+}
+```
+</ResponseExample>
+
+Imports families, samples, and functions into the MCRIT instance. Existing samples (matched by SHA256) are skipped.
+
+<Expandable title="Response Fields">
+  <ResponseField name="status" type="string">
+    Request status ("successful" or "failed")
+  </ResponseField>
+  
+  <ResponseField name="data" type="object">
+    Import report
+    
+    <Expandable title="Import Report">
+      <ResponseField name="num_samples_imported" type="integer">
+        Number of new samples added to the database
+      </ResponseField>
+      
+      <ResponseField name="num_samples_skipped" type="integer">
+        Number of samples skipped (already exist)
+      </ResponseField>
+      
+      <ResponseField name="num_functions_imported" type="integer">
+        Number of new functions added to the database
+      </ResponseField>
+      
+      <ResponseField name="num_functions_skipped" type="integer">
+        Number of functions skipped (already exist)
+      </ResponseField>
+    </Expandable>
+  </ResponseField>
+</Expandable>
+
+---
+
+## Import Workflow
+
+The import process follows these steps:
+
+1. **Validate Configuration**: Checks if the configuration hashes match between export and import instances
+2. **Family Processing**: Creates or updates family entries based on the family mapping
+3. **Sample Processing**: Imports sample entries, skipping duplicates based on SHA256
+4. **Function Processing**: Imports function entries with their MinHashes and PicHashes
+5. **Index Update**: Updates the MinHash index bands with new function signatures
+
+<Note>
+  Configuration hashes must match for MinHashes to be reusable. If configurations differ, MinHashes will need to be recalculated after import.
+</Note>
+
+---
+
+## Best Practices
+
+### For Large Exports
+
+<Tip>
+  Always use `compress=true` when exporting large datasets to reduce bandwidth and storage requirements.
+</Tip>
+
+```bash
+curl -X GET https://your-mcrit-instance.com/export?compress=true \
+  -H "apitoken: YOUR_API_TOKEN" \
+  -o mcrit_export_compressed.json
+```
+
+### For Selective Migration
+
+Export only specific sample families or versions:
+
+1. Use the search API to find relevant sample IDs
+2. Export using the selective endpoint with those IDs
+3. Import into the target instance
+
+### For Backup and Restore
+
+```bash
+# Backup
+curl -X GET https://your-mcrit-instance.com/export?compress=true \
+  -H "apitoken: YOUR_API_TOKEN" \
+  -o backup_$(date +%Y%m%d).json
+
+# Restore (after respawn)
+curl -X POST https://your-mcrit-instance.com/respawn \
+  -H "apitoken: YOUR_API_TOKEN"
+
+curl -X POST https://your-mcrit-instance.com/import \
+  -H "apitoken: YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @backup_20260303.json
+```
+
+<Warning>
+  Always verify the import report to ensure all expected samples and functions were imported successfully.
+</Warning>

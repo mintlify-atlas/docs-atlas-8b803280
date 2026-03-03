@@ -1,0 +1,98 @@
+---
+title: Delete Sample
+description: Remove a sample from the MCRIT database and trigger index recalculation
+---
+
+## Delete Sample
+
+<api-endpoint method="DELETE" path="/samples/{sample_id}" />
+
+Deletes a sample from the database and forces recalculation of the MinHash index. This is a destructive operation that removes the sample and all associated data.
+
+### Path Parameters
+
+<ParamField path="sample_id" type="integer" required>
+  Unique identifier of the sample to delete
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request - either "successful" or "failed"
+</ResponseField>
+
+<ResponseField name="data" type="boolean | object">
+  True if deletion was successful, or an error message object if failed
+  
+  <Expandable title="Success Response">
+    <ResponseField name="data" type="boolean">
+      Returns true when the sample is successfully deleted
+    </ResponseField>
+  </Expandable>
+  
+  <Expandable title="Error Response">
+    <ResponseField name="data.message" type="string">
+      Error description explaining why the deletion failed
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+```bash Delete sample
+curl -X DELETE "https://your-mcrit-instance.com/samples/42" \
+  -H "apitoken: your-api-token"
+```
+</CodeGroup>
+
+### Response Examples
+
+#### Success
+
+```json
+{
+  "status": "successful",
+  "data": true
+}
+```
+
+#### Error (Failed to Delete)
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "Failed to delete sample."
+  }
+}
+```
+
+### Important Notes
+
+<Warning>
+  Deleting a sample is a permanent operation. The sample and all its associated data (functions, matches, etc.) will be removed from the database.
+</Warning>
+
+<Info>
+  After deletion, the MinHash index is automatically recalculated to maintain consistency. This may take some time depending on the size of your database.
+</Info>
+
+### What Gets Deleted
+
+When you delete a sample, the following data is removed:
+
+- The sample entry itself
+- All functions associated with the sample
+- All MinHash signatures for those functions
+- All match results involving this sample
+- Any cached analysis data
+
+### Force Recalculation
+
+This endpoint automatically triggers index recalculation (`force_recalculation=True`) to ensure:
+
+- MinHash bands are updated
+- Function similarity indexes are recalculated
+- Match results are refreshed
+- Database consistency is maintained

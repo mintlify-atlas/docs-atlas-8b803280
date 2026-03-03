@@ -1,0 +1,305 @@
+---
+title: Managing Families
+description: Organize samples into malware families and manage family metadata in MCRIT
+---
+
+MCRIT organizes samples into families for better analysis and classification. Families group related malware variants together and provide aggregate statistics.
+
+## Understanding Families
+
+A family in MCRIT represents:
+- A group of related samples (e.g., "win.wannacry")
+- Aggregate statistics (total samples, functions)
+- Library vs. malware classification
+- Optional version tracking within the family
+
+## Searching Families
+
+Search for families by name:
+
+```bash
+mcrit client search wannacry
+```
+
+**Output:**
+```
+Family Search Results
+Family 2 (win.wannacry): 
+********************
+Sample Search Results
+Sample 1 (intel, 32 bit) - ca29de1dc8817868c93e54b09f557fe14e40083c0955294df5bd91f52ba469c8_unpacked (win.wannacry): 
+Sample 2 (intel, 32 bit) - 3e6de9e2baacf930949647c399818e7a2caea2626df6a468407854aaa515eed9 (win.wannacry): 
+********************
+```
+
+## Programmatic Family Access
+
+Use the Python client to work with families:
+
+```python
+from mcrit.client.McritClient import McritClient
+
+client = McritClient("http://127.0.0.1:8000")
+
+# Get all families
+families = client.getFamilies()
+for family_id, family_entry in families.items():
+    print(f"Family: {family_entry.family_name}")
+    print(f"  ID: {family_entry.family_id}")
+    print(f"  Samples: {family_entry.num_samples}")
+    print(f"  Functions: {family_entry.num_functions}")
+    print(f"  Library samples: {family_entry.num_library_samples}")
+    print(f"  Is library: {family_entry.is_library}")
+```
+
+## Get Family by ID
+
+```python
+# Get specific family
+family = client.getFamily(family_id=2)
+
+print(f"Family: {family.family_name}")
+print(f"Total samples: {family.num_samples}")
+print(f"Total functions: {family.num_functions}")
+```
+
+## Get Family Samples
+
+Retrieve all samples in a family:
+
+```python
+# Get family with samples
+family = client.getFamily(family_id=2, with_samples=True)
+
+if family.samples:
+    for sample_id, sample in family.samples.items():
+        print(f"Sample {sample_id}: {sample.filename}")
+        print(f"  SHA256: {sample.sha256}")
+        print(f"  Version: {sample.version}")
+        print(f"  Functions: {sample.num_functions}")
+        print(f"  Architecture: {sample.architecture}")
+```
+
+## Modify Family Metadata
+
+Update family information:
+
+```python
+# Rename family
+result = client.modifyFamily(
+    family_id=2,
+    family_name="win.wannacry.v2"
+)
+
+if result:
+    print("Family updated successfully")
+```
+
+## Delete Family
+
+<Warning>
+Deleting a family will also delete all associated samples and functions by default.
+</Warning>
+
+```python
+# Delete family and all samples
+result = client.deleteFamily(family_id=2, keep_samples=False)
+
+if result:
+    print("Family and samples deleted")
+```
+
+### Keep Samples When Deleting
+
+Delete the family grouping but preserve samples:
+
+```python
+# Delete family but keep samples
+result = client.deleteFamily(family_id=2, keep_samples=True)
+
+if result:
+    print("Family deleted, samples preserved")
+```
+
+Samples will become "orphaned" and can be reassigned to another family.
+
+## Assigning Samples to Families
+
+Assign samples to families during submission:
+
+```bash
+# Single file
+mcrit client submit sample.exe -f emotet -v 2024-01
+
+# Directory
+mcrit client submit --mode dir ~/samples/ -f trickbot -v epoch-1000
+
+# Recursive (automatic family detection)
+mcrit client submit --mode recursive ~/malware_collection/
+```
+
+## Reassigning Existing Samples
+
+Change a sample's family assignment:
+
+```python
+# Get sample
+sample = client.getSampleBySha256("ca29de1dc8817868c...")
+
+# Update family and version
+result = client.modifySample(
+    sample_id=sample.sample_id,
+    family="win.wannacry",
+    version="2017-05-12"
+)
+```
+
+Using CLI:
+```bash
+mcrit client submit existing_sample.exe -f new_family -v new_version -u
+```
+
+The `-u` flag forces updates for existing samples.
+
+## Library Families
+
+Mark families as library code for filtering:
+
+```bash
+# Mark submissions as library
+mcrit client submit --mode dir ~/openssl_bins/ -f openssl -v 1.1.1 -l
+```
+
+Programmatically:
+```python
+client.modifySample(
+    sample_id=sample.sample_id,
+    is_library=True
+)
+```
+
+## Family Statistics
+
+Get aggregate family statistics:
+
+```python
+status = client.getStatus()
+
+print(f"Total families: {status['status']['num_families']}")
+print(f"Total samples: {status['status']['num_samples']}")
+print(f"Total functions: {status['status']['num_functions']}")
+```
+
+## Family-Level Matching
+
+Query results are aggregated by family:
+
+```python
+from mcrit.storage.MatchingResult import MatchingResult
+
+job_id = client.requestMatchesForUnmappedBinary(binary)
+result_dict = client.awaitResult(job_id)
+result = MatchingResult.fromDict(result_dict)
+
+# Get best match per family
+for family_result in result.getBestSampleMatchesPerFamily(limit=10):
+    print(f"Family: {family_result.family}")
+    print(f"  Best score: {family_result.matched_percent_score_weighted}%")
+    print(f"  Matched functions: {family_result.matched_functions_minhash}")
+```
+
+## Family Naming Conventions
+
+MCRIT is compatible with [Malpedia](https://malpedia.caad.fkie.fraunhofer.de/) naming:
+
+- **Format**: `platform.family_name`
+- **Examples**:
+  - `win.wannacry`
+  - `win.emotet`
+  - `linux.mirai`
+  - `android.joker`
+
+For libraries:
+- `lib.openssl`
+- `lib.boost`
+- `lib.zlib`
+
+## Version Tracking
+
+Versions provide temporal or variant tracking:
+
+```bash
+# Date-based versioning
+mcrit client submit sample.exe -f win.emotet -v 2024-01-15
+
+# Variant versioning
+mcrit client submit sample.exe -f win.trickbot -v epoch-1000
+
+# Build versioning  
+mcrit client submit sample.exe -f lib.openssl -v 1.1.1k
+```
+
+## Family Workflows
+
+<Steps>
+  <Step title="Import samples with family tags">
+    ```bash
+    mcrit client submit --mode dir ~/samples/emotet/ -f emotet -v 2024-Q1
+    ```
+  </Step>
+
+  <Step title="Verify family creation">
+    ```bash
+    mcrit client search emotet
+    ```
+  </Step>
+
+  <Step title="Query new samples against family">
+    ```bash
+    mcrit client query unknown.exe -o ./results/
+    ```
+  </Step>
+
+  <Step title="Analyze family matches">
+    Review matching scores and assign to family if appropriate.
+  </Step>
+</Steps>
+
+## Bulk Family Operations
+
+### Export Family Data
+
+```python
+# Get all sample IDs for a family
+family = client.getFamily(family_id=2, with_samples=True)
+sample_ids = list(family.samples.keys())
+
+# Export family data
+export_data = client.getExportData(sample_ids=sample_ids)
+
+with open("emotet_export.mcrit", "w") as f:
+    json.dump(export_data, f, indent=1)
+```
+
+### Import Family Data
+
+```python
+import json
+
+with open("emotet_export.mcrit") as f:
+    data = json.load(f)
+
+result = client.addImportData(data)
+print(f"Imported: {result['num_samples_imported']} samples")
+print(f"Skipped: {result['num_samples_skipped']} samples")
+```
+
+## Best Practices
+
+- Use consistent naming conventions (e.g., Malpedia format)
+- Include version information for temporal tracking
+- Mark library code appropriately with `-l` flag
+- Use `keep_samples=True` when reorganizing families
+- Export families before major reorganization
+- Leverage family-level statistics for campaign tracking
+- Use version strings for variant differentiation

@@ -1,0 +1,320 @@
+---
+title: Working with Reference Data
+description: Import and manage reference data for common compilers and libraries in MCRIT
+---
+
+Reference data helps MCRIT distinguish malicious code from benign libraries and compiler artifacts. The MCRIT project maintains a repository of pre-indexed reference data for common compilers and libraries.
+
+## MCRIT Reference Data Repository
+
+The official reference data is available at:
+
+**https://github.com/danielplohmann/mcrit-data**
+
+This repository contains ready-to-use MCRIT exports for:
+- Common compilers (MSVC, GCC, MinGW, Clang)
+- Popular libraries (OpenSSL, Boost, zlib, libpng)
+- Windows system libraries
+- Standard runtime libraries
+
+## Downloading Reference Data
+
+Clone the reference data repository:
+
+```bash
+git clone https://github.com/danielplohmann/mcrit-data.git
+cd mcrit-data
+```
+
+The repository structure:
+```
+mcrit-data/
+├── compilers/
+│   ├── msvc_2019_x64.mcrit
+│   ├── gcc_9.3_x64.mcrit
+│   └── ...
+├── libraries/
+│   ├── openssl_1.1.1.mcrit
+│   ├── boost_1.76.mcrit
+│   └── ...
+└── README.md
+```
+
+## Importing Reference Data
+
+<Steps>
+  <Step title="Import a single reference dataset">
+    ```bash
+    mcrit client import mcrit-data/libraries/openssl_1.1.1.mcrit
+    ```
+
+    **Output:**
+    ```
+    {'num_samples_imported': 12, 'num_samples_skipped': 0, 'num_functions_imported': 8543, 'num_functions_skipped': 0, 'num_families_imported': 1, 'num_families_skipped': 0}
+    ```
+  </Step>
+
+  <Step title="Import multiple datasets">
+    ```bash
+    # Import all OpenSSL variants
+    for file in mcrit-data/libraries/openssl*.mcrit; do
+        mcrit client import "$file"
+    done
+    ```
+  </Step>
+
+  <Step title="Verify import">
+    ```bash
+    mcrit client status
+    ```
+
+    Check that sample and function counts have increased.
+  </Step>
+</Steps>
+
+## Programmatic Import
+
+Use the Python client for bulk imports:
+
+```python
+import json
+import os
+from mcrit.client.McritClient import McritClient
+
+client = McritClient("http://127.0.0.1:8000")
+
+# Import all reference data from directory
+data_dir = "./mcrit-data/libraries/"
+
+for filename in os.listdir(data_dir):
+    if filename.endswith(".mcrit"):
+        filepath = os.path.join(data_dir, filename)
+        print(f"Importing {filename}...")
+        
+        with open(filepath) as f:
+            data = json.load(f)
+        
+        result = client.addImportData(data)
+        print(f"  Samples: {result['num_samples_imported']} imported, {result['num_samples_skipped']} skipped")
+        print(f"  Functions: {result['num_functions_imported']} imported, {result['num_functions_skipped']} skipped")
+```
+
+## Creating Your Own Reference Data
+
+Build custom reference datasets for proprietary libraries:
+
+<Steps>
+  <Step title="Submit library binaries">
+    ```bash
+    mcrit client submit --mode dir ~/custom_libs/openssl/ -f lib.openssl -v 3.0.1 -l
+    ```
+
+    The `-l` flag marks samples as library code.
+  </Step>
+
+  <Step title="Wait for indexing">
+    Monitor the queue:
+    ```bash
+    mcrit client queue
+    ```
+  </Step>
+
+  <Step title="Get sample IDs">
+    ```python
+    family = client.getFamily(family_name="lib.openssl", with_samples=True)
+    sample_ids = list(family.samples.keys())
+    ```
+  </Step>
+
+  <Step title="Export reference data">
+    ```bash
+    mcrit client export lib_openssl_3.0.1.mcrit --sample_ids 100,101,102,103
+    ```
+
+    Or programmatically:
+    ```python
+    export_data = client.getExportData(sample_ids=sample_ids)
+    
+    with open("lib_openssl_3.0.1.mcrit", "w") as f:
+        json.dump(export_data, f, indent=1)
+    ```
+  </Step>
+</Steps>
+
+## Export File Format
+
+MCRIT export files (`.mcrit`) contain:
+
+```json
+{
+  "content": {
+    "is_compressed": true,
+    "num_families": 1,
+    "num_samples": 12,
+    "num_functions": 8543
+  },
+  "config": {
+    "version": "1.4.6",
+    "shingler": "7ae53d3b2514730a4d48f993a3e4cd6c6d4a5ca26f93bbed98e0f498295552de",
+    "minhash_signature_bits": 64,
+    "minhash_num_bands": 20
+  },
+  "families": [...],
+  "samples": [...],
+  "functions": [...]
+}
+```
+
+## Import Behavior
+
+When importing data:
+- **Duplicate detection**: SHA256 is used to detect existing samples
+- **Skipping**: Existing samples/functions are automatically skipped
+- **Families**: New families are created or merged with existing ones
+- **MinHashes**: Pre-calculated MinHashes are imported directly
+
+```python
+result = client.addImportData(data)
+
+print(f"Imported: {result['num_samples_imported']} new samples")
+print(f"Skipped: {result['num_samples_skipped']} existing samples")
+```
+
+## Library Detection in Matching
+
+Once imported, library code is automatically identified in matches:
+
+```bash
+mcrit client query malware.exe
+```
+
+**Output:**
+```
+| Family                         | Version              | Sample | SHA256   | Func  | Min   | Pic   | Lib   | Direct        | Freq          |
+|--------------------------------|----------------------|--------|----------|-------|-------|-------|-------|---------------|---------------|
+| win.wannacry                   | 2017-05-12           |    142 | ca29de1d |   926 |   885 |   890 |    15 |  92.45  91.20 |  88.34  87.12 |
+| lib.openssl                    | 1.1.1                |    201 | a1b2c3d4 |   245 |   245 |   245 |   245 |  24.50  00.00 |  22.10  00.00 |
+```
+
+Note the `Lib` column shows library function matches, and non-library scores exclude these.
+
+## Filtering Library Matches
+
+Programmatically filter library code:
+
+```python
+from mcrit.storage.MatchingResult import MatchingResult
+
+job_id = client.requestMatchesForUnmappedBinary(binary)
+result_dict = client.awaitResult(job_id)
+result = MatchingResult.fromDict(result_dict)
+
+# Get only malware matches (exclude libraries)
+for family_result in result.getBestSampleMatchesPerFamily(limit=20, malware_only=True):
+    print(f"Family: {family_result.family}")
+    # family_result.matched_percent_nonlib_score_weighted excludes library code
+    print(f"  Non-library score: {family_result.matched_percent_nonlib_score_weighted}%")
+```
+
+## Compiler Artifacts
+
+Import compiler runtime libraries to filter out:
+- CRT (C Runtime) functions
+- STL (Standard Template Library) code
+- Compiler-generated thunks and stubs
+
+```bash
+# Import MSVC runtime
+mcrit client import mcrit-data/compilers/msvc_2019_crt_x64.mcrit
+
+# Import GCC runtime
+mcrit client import mcrit-data/compilers/gcc_9.3_crt_x64.mcrit
+```
+
+## Building Comprehensive Reference Sets
+
+For production deployments:
+
+```bash
+# Clone reference data
+git clone https://github.com/danielplohmann/mcrit-data.git
+
+# Import all libraries
+for lib in mcrit-data/libraries/*.mcrit; do
+    echo "Importing $lib"
+    mcrit client import "$lib"
+done
+
+# Import all compilers
+for comp in mcrit-data/compilers/*.mcrit; do
+    echo "Importing $comp"
+    mcrit client import "$comp"
+done
+
+# Verify
+mcrit client status
+```
+
+## Updating Reference Data
+
+Keep reference data current:
+
+```bash
+# Update repository
+cd mcrit-data
+git pull
+
+# Re-import updated datasets
+mcrit client import libraries/openssl_3.0.8.mcrit
+```
+
+Import will skip existing samples and only add new ones.
+
+## Managing Storage Size
+
+Reference data can be large. Monitor storage:
+
+```python
+status = client.getStatus()
+print(f"Total functions: {status['status']['num_functions']}")
+print(f"Total samples: {status['status']['num_samples']}")
+```
+
+### Cleanup Strategy
+
+Remove old library versions:
+
+```python
+# Get old openssl family
+family = client.getFamily(family_name="lib.openssl.1.0.1")
+
+# Delete old version (keep newer)
+client.deleteFamily(family.family_id, keep_samples=False)
+```
+
+## Cross-Platform Considerations
+
+Import architecture-specific libraries:
+
+```bash
+# x86 (32-bit)
+mcrit client import mcrit-data/libraries/openssl_1.1.1_x86.mcrit
+
+# x64 (64-bit)
+mcrit client import mcrit-data/libraries/openssl_1.1.1_x64.mcrit
+
+# ARM
+mcrit client import mcrit-data/libraries/openssl_1.1.1_arm.mcrit
+```
+
+## Best Practices
+
+- Import reference data **before** submitting malware samples
+- Keep reference data updated with library versions you encounter
+- Use library flags (`-l`) when submitting known benign code
+- Export your custom reference datasets for backup and sharing
+- Tag library families with `lib.` prefix for easy identification
+- Include version numbers in family names for tracking
+- Monitor library match rates to identify missing reference data
+- Periodically clean up old library versions
+- Share reference datasets with your team for consistency

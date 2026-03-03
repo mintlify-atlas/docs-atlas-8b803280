@@ -1,0 +1,263 @@
+---
+title: "Query Function"
+description: "Match individual functions against the database using SMDA format"
+---
+
+## Query SMDA Function
+
+Matches a single function in SMDA (Simple Manual Disassembly Analysis) format against the database. This is useful for analyzing individual functions without submitting entire binaries.
+
+### Request
+
+<ParamField query="minhash_score" type="integer" default="50">
+  Minimum MinHash similarity score threshold (0-100)
+</ParamField>
+
+<ParamField query="band_matches_required" type="integer" default="0">
+  Minimum number of band matches required
+</ParamField>
+
+<ParamField query="pichash_size" type="integer" default="8">
+  Size of PicHash for matching (must be >= 0)
+</ParamField>
+
+<ParamField query="force_recalculation" type="boolean" default="false">
+  Force recalculation of matches instead of using cached results
+</ParamField>
+
+```bash
+curl -X POST "https://your-server.com/query/function?minhash_score=70" \
+  -H "apitoken: YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @smda_function.json
+```
+
+### SMDA Function Format
+
+The request body should be a JSON object representing a function in SMDA format:
+
+```json
+{
+  "offset": 4096,
+  "num_bytes": 256,
+  "num_instructions": 45,
+  "architecture": "intel",
+  "bitness": 64,
+  "basic_blocks": [
+    {
+      "offset": 4096,
+      "end_offset": 4120,
+      "instructions": [
+        [4096, "55", "push", "rbp"],
+        [4097, "4889e5", "mov", "rbp, rsp"]
+      ]
+    }
+  ],
+  "control_flow": {
+    "4096": [4120, 4150],
+    "4120": [4180]
+  },
+  "picblockhash": "a1b2c3d4e5f6a7b8",
+  "pichash": "1234567890abcdef"
+}
+```
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request (`successful` or `failed`)
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Query results containing matches for the function
+  
+  <Expandable title="data properties">
+    <ResponseField name="info" type="object">
+      Information about the queried function
+      
+      <Expandable title="info properties">
+        <ResponseField name="function_id" type="integer">
+          Temporary negative ID for the query (not stored in database)
+        </ResponseField>
+        <ResponseField name="num_bytes" type="integer">
+          Size of the function in bytes
+        </ResponseField>
+        <ResponseField name="offset" type="integer">
+          Offset of the function
+        </ResponseField>
+        <ResponseField name="num_instructions" type="integer">
+          Number of instructions in the function
+        </ResponseField>
+        <ResponseField name="architecture" type="string">
+          Architecture of the function (e.g., "intel", "arm")
+        </ResponseField>
+        <ResponseField name="bitness" type="integer">
+          Bitness (32 or 64)
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="matches" type="array">
+      Array of function matches from the database
+      
+      <Expandable title="match properties">
+        <ResponseField name="family" type="string">
+          Family name of the matched sample
+        </ResponseField>
+        <ResponseField name="family_id" type="integer">
+          ID of the matched family
+        </ResponseField>
+        <ResponseField name="sample_id" type="integer">
+          ID of the matched sample
+        </ResponseField>
+        <ResponseField name="sample_sha256" type="string">
+          SHA256 hash of the matched sample
+        </ResponseField>
+        <ResponseField name="function_id" type="integer">
+          ID of the matched function
+        </ResponseField>
+        <ResponseField name="function_offset" type="integer">
+          Offset of the matched function
+        </ResponseField>
+        <ResponseField name="num_bytes" type="integer">
+          Size of the matched function in bytes
+        </ResponseField>
+        <ResponseField name="score" type="float">
+          Match score (0-100)
+        </ResponseField>
+        <ResponseField name="is_minhash" type="boolean">
+          Whether the match was found via MinHash
+        </ResponseField>
+        <ResponseField name="is_pichash" type="boolean">
+          Whether the match was found via PicHash
+        </ResponseField>
+        <ResponseField name="is_library" type="boolean">
+          Whether the matched function is library code
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "info": {
+      "function_id": -1,
+      "num_bytes": 256,
+      "offset": 4096,
+      "num_instructions": 45,
+      "architecture": "intel",
+      "bitness": 64
+    },
+    "matches": [
+      {
+        "family": "malware_family_x",
+        "family_id": 15,
+        "sample_id": 789,
+        "sample_sha256": "def789abc012...",
+        "function_id": 1023,
+        "function_offset": 8192,
+        "num_bytes": 260,
+        "score": 92.5,
+        "is_minhash": true,
+        "is_pichash": false,
+        "is_library": false
+      },
+      {
+        "family": "common_library",
+        "family_id": 1,
+        "sample_id": 45,
+        "sample_sha256": "111222333444...",
+        "function_id": 234,
+        "function_offset": 2048,
+        "num_bytes": 256,
+        "score": 100.0,
+        "is_minhash": false,
+        "is_pichash": true,
+        "is_library": true
+      }
+    ]
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "status": "failed",
+  "data": {
+    "message": "POST request without body can't be processed."
+  }
+}
+```
+
+Returns HTTP 400 if the request has no body or the SMDA function format is invalid.
+
+## Query SMDA Report
+
+Matches a complete SMDA report (containing multiple functions) against the database.
+
+### Request
+
+<ParamField query="minhash_score" type="integer" default="50">
+  Minimum MinHash similarity score threshold (0-100)
+</ParamField>
+
+<ParamField query="band_matches_required" type="integer" default="0">
+  Minimum number of band matches required
+</ParamField>
+
+<ParamField query="pichash_size" type="integer" default="8">
+  Size of PicHash for matching (must be >= 0)
+</ParamField>
+
+<ParamField query="force_recalculation" type="boolean" default="false">
+  Force recalculation of matches instead of using cached results
+</ParamField>
+
+```bash
+curl -X POST "https://your-server.com/query?minhash_score=70" \
+  -H "apitoken: YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @smda_report.json
+```
+
+### SMDA Report Format
+
+The request body should be a JSON object representing a complete SMDA report:
+
+```json
+{
+  "sha256": "abc123def456...",
+  "filename": "sample.exe",
+  "architecture": "intel",
+  "bitness": 64,
+  "base_addr": 4194304,
+  "binary_size": 52480,
+  "num_functions": 145,
+  "xcfg": {
+    "4096": {
+      "offset": 4096,
+      "num_bytes": 256,
+      "basic_blocks": [...],
+      "control_flow": {...}
+    }
+  }
+}
+```
+
+### Response
+
+The response structure is identical to the binary query endpoint, containing full matching results across all functions in the report.
+
+### Use Cases
+
+- Matching functions extracted from IDA Pro or Ghidra
+- Analyzing individual functions from larger binaries
+- Integration with custom disassemblers that output SMDA format
+- Focused analysis on specific functions of interest

@@ -1,0 +1,206 @@
+---
+title: MinHash Algorithm
+description: Understanding MinHash-based similarity estimation in MCRIT for efficient function comparison
+---
+
+MCRIT uses the MinHash algorithm to estimate similarity between disassembled functions efficiently. This probabilistic technique allows rapid comparison of code across large databases of samples.
+
+## Overview
+
+MinHash is a locality-sensitive hashing technique that enables efficient similarity estimation between sets. In MCRIT, functions are represented as sets of "shingles" (feature sequences), and MinHash signatures are computed to estimate Jaccard similarity between functions.
+
+The key advantage: instead of comparing every function against every other function, MinHash allows MCRIT to quickly identify candidate matches using banded indexing.
+
+## MinHash Signature Generation
+
+MCRIT generates compact MinHash signatures for each function through a multi-stage process:
+
+### 1. Shingling
+
+Functions are first converted into sets of shingles using multiple shingling strategies (see [Shinglers](/concepts/shinglers)). Each shingler extracts different features from the function.
+
+### 2. Hash Calculation
+
+For each position in the signature, MCRIT:
+- Processes all shingles through each shingler
+- Applies hash functions with different seeds (or XOR values)
+- Selects the minimum hash value
+
+The implementation supports three strategies:
+
+#### Strategy 1: HASH_ALL
+Calculates a new hash for every shingler output with each seed:
+
+```python
+for hash_seed in self._minhash_config.HASH_SEEDS:
+    minimum_shingles = []
+    for shingler in self._shinglers:
+        outputs = shingler.process(smda_function, hash_seed)
+        minimum_shingle = min(outputs)
+        minimum_shingles.append(minimum_shingle)
+    minhash_signature.append(min(minimum_shingles))
+```
+
+#### Strategy 2: XOR_ALL (Default Legacy)
+Computes shingles once, then XORs with different values:
+
+```python
+for shingler in self._shinglers:
+    shingler_outputs[shingler] = shingler.process(smda_function, 0)
+
+for hash_seed in self._minhash_seeds:
+    xored_shingles = []
+    for outputs in shingler_outputs.values():
+        xored_outputs = [shingle ^ hash_seed for shingle in outputs]
+        xored_shingles.append(min(xored_outputs))
+    minhash_signature.append(min(xored_shingles))
+```
+
+#### Strategy 3: SEGMENTED (Recommended)
+Divides the signature into weighted segments, giving different shinglers dedicated portions:
+
+```python
+for index, shingler_name in enumerate(self._signature_segments):
+    hash_seed = self._minhash_seeds[index]
+    xored_outputs = [shingle ^ hash_seed for shingle in shingler_outputs[shingler_name]]
+    minhash_signature.append(min(xored_outputs))
+```
+
+Source: `mcrit/minhash/MinHasher.py:186-211`
+
+### 3. Signature Compression
+
+Signatures can use 8-bit or 32-bit values per position. The default configuration uses:
+- **Signature length**: 64 positions
+- **Bits per position**: 8 bits
+- **Total size**: 64 bytes per function
+
+```python
+if self._minhash_config.MINHASH_SIGNATURE_BITS <= 8:
+    self.minhash = np.array(self.minhash_int, dtype=np.uint8).tobytes()
+else:
+    self.minhash = np.array(self.minhash_int, dtype=np.uint32).tobytes()
+```
+
+Source: `mcrit/minhash/MinHash.py:55-58`
+
+## Configuration
+
+Key MinHash parameters in `MinHashConfig`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `MINHASH_STRATEGY` | `SEGMENTED` | Algorithm strategy (HASH_ALL, XOR_ALL, or SEGMENTED) |
+| `MINHASH_SIGNATURE_LENGTH` | 64 | Number of hash values in signature |
+| `MINHASH_SIGNATURE_BITS` | 8 | Bits per signature element (1-32) |
+| `MINHASH_FN_MIN_INS` | 10 | Minimum instructions for hashing |
+| `MINHASH_MATCHING_THRESHOLD` | 50 | Minimum score (0-100) to consider a match |
+| `MINHASH_SEED` | `0xDEADBEEF` | Random seed for initialization |
+
+Source: `mcrit/config/MinHashConfig.py:14-26`
+
+## Similarity Scoring
+
+MCRIT calculates similarity by comparing MinHash signatures position-by-position:
+
+```python
+@staticmethod
+def calculateMinHashScore(first, second, minhash_bits=32):
+    if minhash_bits <= 8:
+        first_np = np.frombuffer(first, dtype=np.uint8)
+        second_np = np.frombuffer(second, dtype=np.uint8)
+    else:
+        first_np = np.frombuffer(first, dtype=np.uint32)
+        second_np = np.frombuffer(second, dtype=np.uint32)
+    return 100.0 * sum(first_np == second_np) / len(first_np)
+```
+
+Source: `mcrit/minhash/MinHash.py:84-91`
+
+The score represents the percentage of matching positions. A score of 70 means 70% of signature positions match, which approximates a Jaccard similarity of ~0.70.
+
+<Note>
+MinHash scores are **approximations** of true Jaccard similarity. The approximation quality improves with longer signatures.
+</Note>
+
+## Banded LSH Indexing
+
+To avoid comparing every function pair, MCRIT uses **Locality-Sensitive Hashing (LSH)** with banding:
+
+1. Each MinHash signature is divided into **bands** (default: 20 bands of 4 positions each)
+2. Each band is hashed to create a band hash
+3. Functions with matching band hashes become **candidates** for detailed comparison
+4. Only candidates above the threshold are returned as matches
+
+### Band Configuration
+
+Two banding strategies are available:
+
+**Random Strategy** (Legacy):
+- Randomly samples positions from the signature for each band
+- Allows overlapping positions across bands
+- More fuzzy matching behavior
+
+**Linear Strategy** (v1.4.6+, Recommended):
+- Sequential, non-overlapping band coverage
+- Requires: `band_size × num_bands = MINHASH_SIGNATURE_LENGTH`
+- More predictable matching behavior
+
+```python
+if banding_strategy == "linear":
+    for band_index in range(num_bands):
+        index_sequence = []
+        step_size = int(MINHASH_SIGNATURE_LENGTH / band_size)
+        for index_num in range(band_size):
+            index_sequence.append(index_num * step_size + band_index)
+        band_projection[band_index] = index_sequence
+```
+
+Source: `mcrit/storage/StorageInterface.py:699-714`
+
+<Tip>
+The default configuration (`BAND_MATCHES_REQUIRED=2`) means functions must match in at least 2 bands to be considered candidates. Increase this to reduce false positives.
+</Tip>
+
+## Function Hashing Criteria
+
+Not all functions are hashed. A function must meet minimum size requirements:
+
+```python
+def isMinHashableFunction(self, smda_function):
+    is_hashable = False
+    if (self._minhash_config.MINHASH_FN_MIN_BLOCKS
+        and smda_function.num_blocks > self._minhash_config.MINHASH_FN_MIN_BLOCKS):
+        is_hashable = True
+    if (self._minhash_config.MINHASH_FN_MIN_INS
+        and smda_function.num_instructions > self._minhash_config.MINHASH_FN_MIN_INS):
+        is_hashable = True
+    return is_hashable
+```
+
+Source: `mcrit/minhash/MinHasher.py:50-62`
+
+By default, functions need at least **10 instructions** to be hashed. Small functions are better matched using PicHash.
+
+## Performance Considerations
+
+### Memory Usage
+- Each 8-bit signature: 64 bytes
+- 1 million functions: ~61 MB for signatures alone
+- Band indices add additional overhead
+
+### Computation
+- MinHash calculation: ~1-2ms per function
+- Matching with banding: sub-linear in database size
+- Full comparison without banding: O(n²) comparisons
+
+<Info>
+MCRIT processes MinHash generation and matching in parallel by default. Configure `MINHASH_POOL_INDEXING` and `MINHASH_POOL_MATCHING` to control this behavior.
+</Info>
+
+## Related Concepts
+
+- [Shinglers](/concepts/shinglers) - Feature extraction methods
+- [PicHash](/concepts/pichash) - Exact hashing for small functions
+- [Matching](/concepts/matching) - How matches are computed and ranked
+- [Storage](/concepts/storage) - How MinHashes are indexed and retrieved

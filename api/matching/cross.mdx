@@ -1,0 +1,258 @@
+---
+title: "Cross Match Samples"
+description: "Get cross-matching results for multiple samples"
+---
+
+## Get Cross Sample Matches
+
+Performs cross-matching between multiple samples, finding similarities across all provided sample IDs.
+
+<ParamField path="sample_ids" type="string" required>
+  Comma-separated list of sample IDs to cross-match (e.g., "123,456,789")
+</ParamField>
+
+<ParamField query="minhash_score" type="integer" default="50">
+  Minimum MinHash similarity score threshold (0-100)
+</ParamField>
+
+<ParamField query="band_matches_required" type="integer" default="0">
+  Minimum number of band matches required
+</ParamField>
+
+<ParamField query="pichash_size" type="integer" default="8">
+  Size of PicHash for matching (must be >= 0)
+</ParamField>
+
+<ParamField query="force_recalculation" type="boolean" default="false">
+  Force recalculation of matches instead of using cached results
+</ParamField>
+
+<ParamField query="sample_group_only" type="boolean" default="false">
+  Only match against samples in the same group
+</ParamField>
+
+### Request
+
+```bash
+curl -X GET "https://your-server.com/matches/sample/cross/123,456,789?minhash_score=70" \
+  -H "apitoken: YOUR_API_TOKEN"
+```
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request (`successful` or `failed`)
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Cross-matching results for all provided samples
+  
+  <Expandable title="data properties">
+    <ResponseField name="samples" type="array">
+      Array of matched samples across all input samples
+      
+      <Expandable title="sample match properties">
+        <ResponseField name="sample_id" type="integer">
+          ID of the matched sample
+        </ResponseField>
+        <ResponseField name="family" type="string">
+          Family name of the matched sample
+        </ResponseField>
+        <ResponseField name="family_id" type="integer">
+          ID of the matched sample's family
+        </ResponseField>
+        <ResponseField name="version" type="string">
+          Version of the matched sample
+        </ResponseField>
+        <ResponseField name="sha256" type="string">
+          SHA256 hash of the matched sample
+        </ResponseField>
+        <ResponseField name="filename" type="string">
+          Filename of the matched sample
+        </ResponseField>
+        <ResponseField name="num_bytes" type="integer">
+          Size of the matched sample in bytes
+        </ResponseField>
+        <ResponseField name="num_functions" type="integer">
+          Number of functions in the matched sample
+        </ResponseField>
+        <ResponseField name="matched" type="object">
+          Matching metrics
+          
+          <Expandable title="matched properties">
+            <ResponseField name="functions" type="object">
+              Function-level matching counts
+              
+              <Expandable title="functions properties">
+                <ResponseField name="minhashes" type="integer">
+                  Number of functions matched via MinHash
+                </ResponseField>
+                <ResponseField name="pichashes" type="integer">
+                  Number of functions matched via PicHash
+                </ResponseField>
+                <ResponseField name="combined" type="integer">
+                  Total number of matched functions
+                </ResponseField>
+                <ResponseField name="library" type="integer">
+                  Number of library functions matched
+                </ResponseField>
+              </Expandable>
+            </ResponseField>
+            
+            <ResponseField name="bytes" type="object">
+              Byte-level matching metrics
+              
+              <Expandable title="bytes properties">
+                <ResponseField name="unweighted" type="float">
+                  Total matched bytes (unweighted)
+                </ResponseField>
+                <ResponseField name="score_weighted" type="float">
+                  Matched bytes weighted by similarity score
+                </ResponseField>
+                <ResponseField name="frequency_weighted" type="float">
+                  Matched bytes weighted by frequency
+                </ResponseField>
+                <ResponseField name="nonlib_unweighted" type="float">
+                  Matched bytes excluding libraries (unweighted)
+                </ResponseField>
+                <ResponseField name="nonlib_score_weighted" type="float">
+                  Matched bytes excluding libraries (score weighted)
+                </ResponseField>
+                <ResponseField name="nonlib_frequency_weighted" type="float">
+                  Matched bytes excluding libraries (frequency weighted)
+                </ResponseField>
+              </Expandable>
+            </ResponseField>
+            
+            <ResponseField name="percent" type="object">
+              Percentage-based matching metrics
+              
+              <Expandable title="percent properties">
+                <ResponseField name="unweighted" type="float">
+                  Percentage of matched bytes (unweighted)
+                </ResponseField>
+                <ResponseField name="score_weighted" type="float">
+                  Percentage of matched bytes (score weighted)
+                </ResponseField>
+                <ResponseField name="frequency_weighted" type="float">
+                  Percentage of matched bytes (frequency weighted)
+                </ResponseField>
+                <ResponseField name="nonlib_unweighted" type="float">
+                  Percentage of matched bytes excluding libraries (unweighted)
+                </ResponseField>
+                <ResponseField name="nonlib_score_weighted" type="float">
+                  Percentage of matched bytes excluding libraries (score weighted)
+                </ResponseField>
+                <ResponseField name="nonlib_frequency_weighted" type="float">
+                  Percentage of matched bytes excluding libraries (frequency weighted)
+                </ResponseField>
+              </Expandable>
+            </ResponseField>
+          </Expandable>
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="functions" type="object">
+      Function-level match details keyed by function_id
+      
+      <Expandable title="function properties">
+        <ResponseField name="fid" type="integer">
+          Function ID
+        </ResponseField>
+        <ResponseField name="num_bytes" type="integer">
+          Size of the function in bytes
+        </ResponseField>
+        <ResponseField name="offset" type="integer">
+          Offset of the function in the binary
+        </ResponseField>
+        <ResponseField name="matches" type="array">
+          Array of match tuples: [family_id, sample_id, function_id, score, flags]
+          
+          <Expandable title="match tuple">
+            <ResponseField name="[0]" type="integer">
+              Matched family ID
+            </ResponseField>
+            <ResponseField name="[1]" type="integer">
+              Matched sample ID
+            </ResponseField>
+            <ResponseField name="[2]" type="integer">
+              Matched function ID
+            </ResponseField>
+            <ResponseField name="[3]" type="float">
+              Match score (0-100)
+            </ResponseField>
+            <ResponseField name="[4]" type="integer">
+              Match flags (bitfield: 1=MinHash, 2=PicHash, 4=Library)
+            </ResponseField>
+          </Expandable>
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "samples": [
+      {
+        "sample_id": 123,
+        "family": "malware_family_a",
+        "family_id": 10,
+        "version": "1.0",
+        "sha256": "abc123...",
+        "filename": "sample.exe",
+        "num_bytes": 52480,
+        "num_functions": 145,
+        "matched": {
+          "functions": {
+            "minhashes": 120,
+            "pichashes": 15,
+            "combined": 135,
+            "library": 40
+          },
+          "bytes": {
+            "unweighted": 45320.0,
+            "score_weighted": 42100.5,
+            "frequency_weighted": 38900.2,
+            "nonlib_unweighted": 32100.0,
+            "nonlib_score_weighted": 29800.3,
+            "nonlib_frequency_weighted": 27500.1
+          },
+          "percent": {
+            "unweighted": 86.3,
+            "score_weighted": 80.2,
+            "frequency_weighted": 74.1,
+            "nonlib_unweighted": 61.2,
+            "nonlib_score_weighted": 56.8,
+            "nonlib_frequency_weighted": 52.4
+          }
+        }
+      }
+    ],
+    "functions": {
+      "1": {
+        "fid": 1,
+        "num_bytes": 256,
+        "offset": 4096,
+        "matches": [
+          [10, 123, 501, 95.5, 1],
+          [11, 124, 502, 87.2, 3]
+        ]
+      }
+    }
+  }
+}
+```
+
+### Use Cases
+
+Cross-matching is useful for:
+- Identifying common code patterns across multiple samples
+- Finding shared library code between binaries
+- Analyzing malware families for shared components
+- Detecting code reuse across different versions

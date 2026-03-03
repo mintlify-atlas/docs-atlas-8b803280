@@ -1,0 +1,263 @@
+---
+title: Server and Worker Setup
+description: Learn how to run MCRIT server and workers for distributed processing
+---
+
+MCRIT uses a distributed architecture with a REST API server and one or more workers that process queued jobs. This guide covers how to set up and run both components.
+
+## Architecture Overview
+
+The MCRIT backend consists of two main components:
+
+- **Server**: Provides a REST API interface for client interaction on port 8000
+- **Worker**: Processes jobs from the queue (MinHash calculation, matching, etc.)
+
+Both components connect to a MongoDB backend for persistent storage and queue management.
+
+## Starting the Server
+
+<Steps>
+  <Step title="Start MongoDB">
+    Ensure MongoDB 5.0 is running:
+    ```bash
+    sudo systemctl start mongod
+    ```
+  </Step>
+
+  <Step title="Launch the server">
+    Start the MCRIT REST API server:
+    ```bash
+    mcrit server
+    ```
+
+    The server will be listening on `http://127.0.0.1:8000/` by default.
+
+    **Output:**
+    ```
+    [!] Detected linux platform. Using waitress deployment.
+    Serving on http://0.0.0.0:8000
+    ```
+  </Step>
+
+  <Step title="Verify server is running">
+    Test the server using the CLI:
+    ```bash
+    mcrit client status
+    ```
+
+    **Example response:**
+    ```
+    DB:        mongodb - 187 | 2026-03-03T10:30:45.123Z
+    Families:  14
+    Samples:   137
+    Functions: 129110
+    ```
+  </Step>
+</Steps>
+
+## Starting Workers
+
+<Steps>
+  <Step title="Start a standard worker">
+    Workers process jobs from the queue:
+    ```bash
+    mcrit worker
+    ```
+
+    **Output:**
+    ```
+    Starting as worker: Worker-a1b2c3d4-5678-90ab-cdef-1234567890ab
+    ```
+
+    Each worker gets a unique ID and processes jobs sequentially.
+  </Step>
+
+  <Step title="Start multiple workers (optional)">
+    For better performance, run multiple workers in separate terminals:
+    ```bash
+    # Terminal 1
+    mcrit worker
+
+    # Terminal 2  
+    mcrit worker
+
+    # Terminal 3
+    mcrit worker
+    ```
+
+    Multiple workers can process jobs in parallel.
+  </Step>
+
+  <Step title="Monitor queue status">
+    Check the processing queue:
+    ```bash
+    mcrit client queue
+    ```
+
+    **Example output:**
+    ```
+    64243b27f3876416bffad86e 64243b28cbc77c2df4d8d79f | 2023-03-29T13:20:39.065Z 2023-03-29T13:20:39.114Z 2023-03-29T13:20:40.593Z | updateMinHashesForSample(2) - 1
+    ```
+  </Step>
+</Steps>
+
+## Worker Types
+
+MCRIT provides different worker types for different use cases:
+
+### Standard Worker
+
+```bash
+mcrit worker
+```
+
+Processes jobs sequentially within the same process. Best for most use cases (Worker.py:50-90).
+
+### Spawning Worker
+
+```bash
+mcrit spawningworker
+```
+
+Spawns child processes for each job, reducing memory fragmentation issues. The spawning worker terminates children after `QUEUE_SPAWNINGWORKER_CHILDREN_TIMEOUT` seconds (default: 3600s).
+
+Use this for:
+- Large-scale deployments
+- Memory-intensive operations
+- Long-running instances
+
+### Single Job Worker
+
+```bash
+mcrit singlejobworker --job_id <24-char-hex-id>
+```
+
+Processes a specific job by its ID. Useful for debugging or manual job execution.
+
+## Server Configuration
+
+### Using Gunicorn (Linux)
+
+On Linux, MCRIT can use Gunicorn for better performance:
+
+```bash
+mcrit server --gunicorn
+```
+
+Gunicorn provides:
+- Better request handling under load
+- Process-based concurrency
+- Production-grade WSGI server
+
+### Using Waitress (Windows/Default)
+
+On Windows or when Gunicorn is unavailable:
+
+```bash
+mcrit server
+```
+
+Waitress is used as the default WSGI server.
+
+## Profiling
+
+Enable profiling for performance analysis:
+
+```bash
+# Profile the server
+mcrit server --profile
+
+# Profile a worker
+mcrit worker --profile
+```
+
+Profile results are stored in the `profiler/` directory.
+
+## Production Deployment
+
+<Steps>
+  <Step title="Enable MongoDB on boot">
+    ```bash
+    sudo systemctl enable mongod
+    ```
+  </Step>
+
+  <Step title="Create systemd service for server">
+    Create `/etc/systemd/system/mcrit-server.service`:
+    ```ini
+    [Unit]
+    Description=MCRIT Server
+    After=mongod.service
+
+    [Service]
+    Type=simple
+    User=mcrit
+    ExecStart=/usr/local/bin/mcrit server --gunicorn
+    Restart=always
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+  </Step>
+
+  <Step title="Create systemd service for workers">
+    Create `/etc/systemd/system/mcrit-worker@.service`:
+    ```ini
+    [Unit]
+    Description=MCRIT Worker %i
+    After=mongod.service mcrit-server.service
+
+    [Service]
+    Type=simple
+    User=mcrit
+    ExecStart=/usr/local/bin/mcrit spawningworker
+    Restart=always
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+  </Step>
+
+  <Step title="Enable and start services">
+    ```bash
+    # Enable and start server
+    sudo systemctl enable mcrit-server
+    sudo systemctl start mcrit-server
+
+    # Start 3 workers
+    sudo systemctl enable mcrit-worker@{1..3}
+    sudo systemctl start mcrit-worker@{1..3}
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Server won't start
+
+- Check if port 8000 is already in use:
+  ```bash
+  lsof -i :8000
+  ```
+
+- Verify MongoDB is running:
+  ```bash
+  sudo systemctl status mongod
+  ```
+
+### Workers not processing jobs
+
+- Check queue status:
+  ```bash
+  mcrit client queue
+  ```
+
+- Verify workers are connected to the correct MongoDB instance
+- Check worker logs for errors
+
+### Memory issues
+
+Switch to spawning workers to isolate job memory:
+```bash
+mcrit spawningworker
+```

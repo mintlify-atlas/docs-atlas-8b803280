@@ -1,0 +1,591 @@
+---
+title: Architecture Details
+description: Deep dive into MCRIT's internal architecture, components, and data flow
+---
+
+MCRIT is a distributed system designed for scalable code similarity analysis using MinHash and Locality-Sensitive Hashing (LSH). This document details the internal architecture and component interactions.
+
+## System Architecture
+
+```
+┌─────────────────┐
+│   MCRIT Client  │ ──HTTP──┐
+│   IDA Plugin    │         │
+│   CLI Tool      │         │
+└─────────────────┘         │
+                            ▼
+┌────────────────────────────────────────┐
+│           REST API Server              │
+│  (Falcon/Waitress or Gunicorn)        │
+├────────────────────────────────────────┤
+│         MinHashIndex                   │
+│  - Query routing                       │
+│  - Job scheduling                      │
+│  - Result management                   │
+└─────────────┬──────────────────────────┘
+              │
+              ▼
+┌────────────────────────────────────────┐
+│         Queue (LocalQueue)             │
+│  - Job persistence                     │
+│  - Priority management                 │
+│  - Worker coordination                 │
+└─────────────┬──────────────────────────┘
+              │
+              ▼
+┌────────────────────────────────────────┐
+│      Worker (1 to N instances)         │
+│  - MinHash calculation                 │
+│  - Matching operations                 │
+│  - PicHash calculation                 │
+└─────────────┬──────────────────────────┘
+              │
+              ▼
+┌────────────────────────────────────────┐
+│    Storage Backend (MongoDB/Memory)    │
+│  - Samples & Functions                 │
+│  - MinHash & Band indices              │
+│  - PicHash index                       │
+└────────────────────────────────────────┘
+```
+
+## Core Components
+
+### 1. REST API Server
+
+Location: `mcrit/server/`
+
+The REST API provides HTTP endpoints for all MCRIT operations.
+
+#### Application Routes
+
+`application_routes.py` defines the Falcon WSGI application:
+
+```python
+import falcon
+from mcrit.server.SampleResource import SampleResource
+from mcrit.server.QueryResource import QueryResource
+from mcrit.server.MatchResource import MatchResource
+
+def create_app(index):
+    app = falcon.App()
+    
+    # Resource endpoints
+    app.add_route('/samples', SampleResource(index))
+    app.add_route('/samples/{sample_id}', SampleResource(index))
+    app.add_route('/query', QueryResource(index))
+    app.add_route('/matches', MatchResource(index))
+    
+    return app
+```
+
+#### Resource Classes
+
+- **SampleResource**: Sample submission, retrieval, deletion
+- **FunctionResource**: Function-level operations
+- **FamilyResource**: Family management
+- **QueryResource**: Query matching operations
+- **MatchResource**: Matching job management
+- **StatusResource**: System status and statistics
+- **JobResource**: Job queue operations
+
+#### WSGI Servers
+
+**Development**: Waitress (cross-platform)
+```python
+from waitress import serve
+serve(app, host='127.0.0.1', port=8000)
+```
+
+**Production (Linux)**: Gunicorn (better performance)
+```python
+from mcrit.config.GunicornConfig import GunicornConfig
+gunicorn_config = GunicornConfig()
+# Workers, threads, bind address configured here
+```
+
+### 2. MinHashIndex
+
+Location: `mcrit/index/MinHashIndex.py`
+
+The MinHashIndex is the central coordinator that:
+
+- Routes requests from API to workers
+- Manages job lifecycle
+- Provides search functionality
+- Coordinates storage access
+
+```python
+class MinHashIndex(QueueRemoteCaller(Worker)):
+    def __init__(self, config=None, base_url=None):
+        self.config = config or McritConfig()
+        self._storage = StorageFactory.getStorage(config)
+        self.minhasher = MinHasher(
+            self._minhash_config, 
+            self._shingler_config
+        )
+        queue = QueueFactory().getQueue(config, storage=self._storage)
+        super().__init__(queue)
+```
+
+#### Key Responsibilities
+
+**Job Scheduling**:
+```python
+def addBinarySample(self, binary_file, family_name, version="", 
+                    base_address=None, ...):
+    # Create job for binary processing
+    job = self.queue.createJob(
+        "addBinarySample",
+        parameters={"binary": binary_file, "family": family_name}
+    )
+    return job.job_id
+```
+
+**Search Operations**:
+```python
+def search(self, query_string, method="minimal", limit=100):
+    # Parse search query
+    tree = self.search_query_parser.parse(query_string)
+    
+    # Execute against storage
+    if method == "minimal":
+        return MinimalSearchCursor(tree, self._storage, limit)
+    else:
+        return FullSearchCursor(tree, self._storage, limit)
+```
+
+### 3. Queue System
+
+Location: `mcrit/queue/`
+
+The queue manages asynchronous job processing.
+
+#### LocalQueue
+
+`LocalQueue.py` provides MongoDB-backed job persistence:
+
+```python
+class LocalQueue:
+    def __init__(self, config, storage):
+        self._db = storage._db
+        self._jobs = self._db["jobs"]
+        self._job_results = self._db["job_results"]
+        
+    def createJob(self, method_name, parameters=None, priority=5):
+        job = Job(
+            job_id=uuid.uuid4(),
+            method=method_name,
+            parameters=parameters,
+            priority=priority,
+            created=datetime.now(),
+            state="created"
+        )
+        self._jobs.insert_one(job.toDict())
+        return job
+    
+    def getNextJob(self, worker_id):
+        # Find highest priority job
+        job_doc = self._jobs.find_one_and_update(
+            {"state": "created"},
+            {"$set": {
+                "state": "in_progress",
+                "worker_id": worker_id,
+                "started": datetime.now()
+            }},
+            sort=[("priority", -1), ("created", 1)]
+        )
+        return Job.fromDict(job_doc) if job_doc else None
+```
+
+#### Job Lifecycle
+
+1. **created**: Job queued, waiting for worker
+2. **in_progress**: Worker processing
+3. **finished**: Completed successfully
+4. **failed**: Error occurred
+5. **aborted**: Manually cancelled
+
+#### QueueRemoteCalls
+
+`QueueRemoteCalls.py` provides RPC-style method invocation:
+
+```python
+class QueueRemoteCaller:
+    """Mixin to enable remote method calls via queue"""
+    
+    def __init__(self, queue):
+        self.queue = queue
+    
+    def __getattribute__(self, name):
+        # Intercept method calls
+        attr = object.__getattribute__(self, name)
+        if callable(attr) and hasattr(attr, '_remote'):
+            # Queue the method call instead of executing
+            return lambda *args, **kwargs: self._queueRemoteCall(
+                name, args, kwargs
+            )
+        return attr
+```
+
+### 4. Worker
+
+Location: `mcrit/Worker.py`, `mcrit/SpawningWorker.py`
+
+Workers execute jobs from the queue.
+
+#### Worker Types
+
+**Standard Worker**:
+```python
+class Worker(QueueRemoteCallee):
+    def __init__(self, queue=None, config=None, storage=None):
+        self._worker_id = f"Worker-{uuid.uuid4()}"
+        self.config = config or McritConfig()
+        self._storage = storage or StorageFactory.getStorage(config)
+        self.minhasher = MinHasher(
+            config.MINHASH_CONFIG, 
+            config.SHINGLER_CONFIG
+        )
+```
+
+**SpawningWorker** (v1.3.14+):
+Spawns child processes for jobs to prevent memory leaks:
+
+```python
+class SpawningWorker(Worker):
+    def processJob(self, job):
+        # Spawn subprocess for job execution
+        process = multiprocessing.Process(
+            target=self._executeJobInProcess,
+            args=(job,)
+        )
+        process.start()
+        process.join(timeout=self._config.QUEUE_SPAWNINGWORKER_CHILDREN_TIMEOUT)
+```
+
+#### Worker Methods
+
+Workers implement methods corresponding to job types:
+
+```python
+@Remote
+def addBinarySample(self, binary_data, family_name, ...):
+    # Disassemble binary
+    disassembler = Disassembler()
+    report = disassembler.disassembleBuffer(binary_data)
+    
+    # Add to storage
+    sample_entry = self._storage.addSmdaReport(report)
+    
+    # Calculate MinHashes
+    minhashes = self.minhasher.calculateMinHashes(report)
+    self._storage.addMinHashes(minhashes)
+    
+    return sample_entry.sample_id
+
+@Remote
+def matchSampleVs(self, sample_id, other_sample_id):
+    matcher = MatcherVs(self._storage, self.config)
+    result = matcher.match(sample_id, other_sample_id)
+    return result
+```
+
+### 5. Storage Layer
+
+Location: `mcrit/storage/`
+
+#### Data Model
+
+**FamilyEntry**:
+```python
+@dataclass
+class FamilyEntry:
+    family_id: int
+    family_name: str
+    is_library: bool = False
+    num_samples: int = 0
+    num_functions: int = 0
+```
+
+**SampleEntry**:
+```python
+@dataclass
+class SampleEntry:
+    sample_id: int
+    family_id: int
+    sha256: str
+    filename: str
+    version: str
+    bitness: int
+    architecture: str
+    base_addr: int
+    binary_size: int
+    num_functions: int
+    smda_version: str
+```
+
+**FunctionEntry**:
+```python
+@dataclass
+class FunctionEntry:
+    function_id: int
+    sample_id: int
+    function_name: str
+    offset: int
+    num_instructions: int
+    num_blocks: int
+    pichash: int
+    minhash: bytes  # Serialized MinHash
+    xcfg: dict  # Extended CFG (optional)
+```
+
+#### Storage Backends
+
+**MongoDbStorage** (Production):
+- Persistent storage
+- Scalable indexing
+- Batch operations
+- Collections: samples, functions, families, bands, pichashes
+
+**MemoryStorage** (Testing/Development):
+- In-memory dictionaries
+- Fast for small datasets
+- No persistence
+
+### 6. MinHash Calculation
+
+Location: `mcrit/minhash/`
+
+#### MinHasher
+
+```python
+class MinHasher:
+    def __init__(self, minhash_config, shingler_config):
+        self._config = minhash_config
+        self._shinglers = shingler_config.SHINGLERS
+    
+    def calculateMinHashes(self, smda_report):
+        minhashes = []
+        for function in smda_report.getFunctions():
+            if self._shouldHash(function):
+                minhash = self.getMinHashForFunction(function)
+                minhashes.append(minhash)
+        return minhashes
+    
+    def getMinHashForFunction(self, function):
+        # Apply all shinglers
+        all_shingles = []
+        for shingler in self._shinglers:
+            shingles = shingler.process(function, self._config.MINHASH_SEED)
+            all_shingles.extend(shingles)
+        
+        # Calculate MinHash
+        minhash = MinHash(function.offset, function_id=None)
+        minhash.addData(all_shingles)
+        return minhash
+```
+
+#### MinHash Class
+
+```python
+class MinHash:
+    def __init__(self, offset, function_id=None, 
+                 minhash_signature_length=64, minhash_bits=8):
+        self.offset = offset
+        self.function_id = function_id
+        self._signature_length = minhash_signature_length
+        self._signature_bits = minhash_bits
+        self._max_value = (2 ** minhash_bits) - 1
+        self._signature = [self._max_value] * minhash_signature_length
+    
+    def addData(self, shingle_sequences):
+        for shingled_sequence in shingle_sequences:
+            for index, hash_value in enumerate(shingled_sequence):
+                # MinHash: keep minimum hash value per signature position
+                bucket_index = index % self._signature_length
+                bucket_value = hash_value & self._max_value
+                if bucket_value < self._signature[bucket_index]:
+                    self._signature[bucket_index] = bucket_value
+```
+
+### 7. Matching System
+
+Location: `mcrit/matchers/`
+
+#### Matcher Types
+
+**MatcherQuery**: Match arbitrary binary/function against database
+```python
+class MatcherQuery(MatcherInterface):
+    def match(self, smda_function):
+        # Calculate MinHash for query function
+        minhash = self.minhasher.getMinHashForFunction(smda_function)
+        
+        # Get candidates from LSH bands
+        candidates = self._storage.getCandidatesForMinHash(minhash)
+        
+        # Calculate precise similarity
+        results = []
+        for candidate_id in candidates:
+            candidate_minhash = self._storage.getMinHashByFunctionId(candidate_id)
+            score = self._calculateSimilarity(minhash, candidate_minhash)
+            if score >= self._threshold:
+                results.append((candidate_id, score))
+        
+        return results
+```
+
+**MatcherSample**: Match entire sample
+**MatcherVs**: Match two samples against each other
+**MatcherCross**: Cross-match multiple samples
+
+### 8. Band-based LSH Index
+
+#### Band Strategies
+
+**Random Banding** (default until v1.4.6):
+```python
+# Random permutation of signature indices
+random.seed(STORAGE_BAND_SEED)
+for band_id in range(num_bands):
+    indices = list(range(signature_length))
+    random.shuffle(indices)
+    band_projection[band_id] = indices[:band_size]
+```
+
+**Linear Banding** (v1.4.6+ default):
+```python
+# Sequential selection for predictable behavior
+step_size = signature_length / band_size
+for band_id in range(num_bands):
+    indices = [i * step_size + band_id for i in range(band_size)]
+    band_projection[band_id] = indices
+```
+
+#### Band Index Structure
+
+```
+band_id → band_hash → set(function_ids)
+
+Example:
+  band_0 → hash_12345 → {func_1, func_42, func_100}
+        → hash_67890 → {func_2, func_50}
+  band_1 → hash_11111 → {func_1, func_2}
+        → hash_22222 → {func_42}
+```
+
+## Data Flow
+
+### Sample Submission
+
+1. **Client** submits binary via REST API
+2. **API Server** creates job in queue
+3. **Worker** picks up job:
+   - Disassembles binary with SMDA
+   - Creates SampleEntry and FunctionEntries
+   - Stores in database
+4. **Worker** calculates MinHashes:
+   - Applies shinglers to each function
+   - Generates MinHash signatures
+   - Updates band indices
+5. **Worker** marks job complete
+6. **Client** polls job status, retrieves sample_id
+
+### Query Matching
+
+1. **Client** submits query binary
+2. **API Server** creates query job
+3. **Worker** processes:
+   - Disassemble query
+   - Calculate MinHashes
+   - For each query function:
+     - Lookup candidates in band index
+     - Calculate exact similarity scores
+     - Filter by threshold
+   - Aggregate results by sample
+4. **Worker** stores MatchingResult
+5. **Client** retrieves results
+
+### Cross Matching
+
+1. **Client** requests cross-match of samples
+2. **API Server** creates cross-match job
+3. **Worker** executes:
+   - Load all function MinHashes for samples
+   - Generate candidate pairs from bands
+   - Calculate similarities (parallelized)
+   - Build MatchingResult matrix
+4. **Client** retrieves aggregated results
+
+## Configuration System
+
+Location: `mcrit/config/`
+
+### Configuration Classes
+
+- **McritConfig**: Top-level config, aggregates all sub-configs
+- **StorageConfig**: Storage backend settings
+- **MinHashConfig**: MinHash algorithm parameters
+- **ShinglerConfig**: Shingler selection and weights
+- **QueueConfig**: Job queue settings
+- **GunicornConfig**: WSGI server configuration (Linux)
+
+### Configuration Loading
+
+```python
+class McritConfig:
+    def __init__(self):
+        self.STORAGE_CONFIG = StorageConfig()
+        self.MINHASH_CONFIG = MinHashConfig()
+        self.SHINGLER_CONFIG = ShinglerConfig(self.MINHASH_CONFIG)
+        self.QUEUE_CONFIG = QueueConfig()
+        
+        # Can be overridden from environment or config file
+        self._loadFromEnvironment()
+```
+
+## Performance Optimizations
+
+### Multiprocessing
+
+- MinHash calculation uses process pools
+- Matching operations parallelized
+- Configurable via `MINHASH_POOL_INDEXING`, `MINHASH_POOL_MATCHING`
+
+### Batch Processing
+
+- Functions processed in batches (`MINHASH_GENERATION_WORKPACK_SIZE`)
+- Candidates processed in packs (`MINHASH_MATCHING_CANDIDATE_WORKPACK_SIZE`)
+- Band rebuilding in chunks (`MINHASH_BAND_REBUILD_WORK_PACKAGE_SIZE`)
+
+### Database Indexing
+
+Critical indices:
+- Samples: `sha256`, `sample_id`, `family_id`
+- Functions: `function_id`, `sample_id`, `pichash`
+- Bands: `(band_id, band_hash)`
+- PicHashes: `pichash`
+
+## Versioning and Compatibility
+
+### Configuration Hashing
+
+MinHash and Shingler configs generate hashes to detect incompatible settings:
+
+```python
+def getConfigHash(self):
+    config_str = f"_{self.MINHASH_STRATEGY}_{self.MINHASH_SIGNATURE_LENGTH}"
+    config_str += f"_{self.MINHASH_SEED}_{self.PICHASH_SIZE}"
+    return hashlib.sha256(config_str.encode()).hexdigest()
+```
+
+### SMDA Version Tracking
+
+Samples track SMDA version for PicHash/MinHash recalculation when SMDA updates.
+
+## See Also
+
+- [Custom Shinglers](/development/custom-shinglers) - Extend shingling
+- [Storage Backends](/development/storage-backends) - Implement storage
+- [Migration Guides](/development/migration-guides) - Version migrations

@@ -1,0 +1,299 @@
+---
+title: Querying for Matches
+description: Query MCRIT for code similarity matches using binaries, SMDA reports, or existing samples
+---
+
+MCRIT provides multiple methods to query for code similarity matches. Query samples are stored temporarily and matched against the entire database.
+
+## Query Binary File
+
+Query an unmapped binary (PE/ELF) against the MCRIT database:
+
+```bash
+mcrit client query unknown_sample.exe
+```
+
+MCRIT will:
+1. Disassemble the binary using SMDA
+2. Calculate MinHashes for all functions
+3. Match against the database
+4. Return matching families and samples
+
+### Query Output
+
+**Console output:**
+```bash
+Started job: 64243b27f3876416bffad86e, waiting for result...
+| Family                         | Version              | Sample | SHA256   | Func  | Min   | Pic   | Lib   | Direct        | Freq          |
+|--------------------------------|----------------------|--------|----------|-------|-------|-------|-------|---------------|---------------|
+| win.wannacry                   | 2017-05-12           |    142 | ca29de1d |   926 |   885 |   890 |    15 |  92.45  91.20 |  88.34  87.12 |
+| win.wannacry                   | 2017-05-05           |    141 | 034578 |   922 |   880 |   885 |    15 |  91.80  90.55 |  87.90  86.68 |
+```
+
+Columns:
+- **Func**: Total functions in matched sample
+- **Min**: Functions matched by MinHash
+- **Pic**: Functions matched by PicHash
+- **Lib**: Library functions matched
+- **Direct**: Direct match percentage (weighted score, non-library score)
+- **Freq**: Frequency-weighted percentage (weighted, non-library)
+
+## Query Memory Dump
+
+For memory dumps, specify the base address:
+
+```bash
+mcrit client query dump.bin -a 0x400000
+```
+
+Optionally specify bitness:
+```bash
+mcrit client query dump.bin -a 0x400000 -b 64
+```
+
+## Query SMDA Report
+
+Query using a pre-generated SMDA report:
+
+```bash
+mcrit client query sample.smda -s
+```
+
+This skips disassembly and directly queries the functions.
+
+## Save Results
+
+Save matching results to a JSON file:
+
+```bash
+mcrit client query sample.exe -o ./results/
+```
+
+Results are saved as `./results/<job_id>.json`.
+
+## Force Recalculation
+
+Bypass cached results and force a fresh query:
+
+```bash
+mcrit client query sample.exe -f
+```
+
+Useful when:
+- Database has been updated
+- Testing different matching parameters
+- Cached results may be stale
+
+## Programmatic Querying
+
+Use the Python client for more control:
+
+```python
+from mcrit.client.McritClient import McritClient
+from smda.common.SmdaReport import SmdaReport
+
+# Initialize client
+client = McritClient("http://127.0.0.1:8000")
+
+# Query with SMDA report
+smda_report = SmdaReport.fromFile("sample.smda")
+job_id = client.requestMatchesForSmdaReport(
+    smda_report,
+    force_recalculation=False
+)
+
+# Wait for results
+result = client.awaitResult(job_id, sleep_time=2, compact=True)
+
+# Access matching data
+for family, matches in result["matches"]["families"].items():
+    print(f"Family: {family}")
+    for sample_match in matches["samples"].values():
+        print(f"  Sample: {sample_match['sample_id']}")
+        print(f"  Score: {sample_match['matched_percent_score_weighted']}")
+```
+
+## Query with Binary Data
+
+### Unmapped Binary
+
+```python
+with open("sample.exe", "rb") as f:
+    binary = f.read()
+
+job_id = client.requestMatchesForUnmappedBinary(
+    binary,
+    disassemble_locally=False,
+    force_recalculation=False
+)
+
+result = client.awaitResult(job_id)
+```
+
+### Mapped Binary
+
+```python
+with open("dump.bin", "rb") as f:
+    binary = f.read()
+
+job_id = client.requestMatchesForMappedBinary(
+    binary,
+    base_address=0x400000,
+    disassemble_locally=False,
+    force_recalculation=False
+)
+
+result = client.awaitResult(job_id)
+```
+
+## Query Existing Sample
+
+Query a sample already in the database:
+
+```python
+# Get sample by SHA256
+sample = client.getSampleBySha256("ca29de1dc8817868c93e54b09f557fe14e40083c0955294df5bd91f52ba469c8")
+
+# Query it
+job_id = client.requestMatchesForSample(
+    sample.sample_id,
+    minhash_threshold=0.7,
+    pichash_size=8
+)
+
+result = client.awaitResult(job_id)
+```
+
+## Matching Parameters
+
+Customize matching behavior:
+
+```python
+job_id = client.requestMatchesForSmdaReport(
+    smda_report,
+    minhash_threshold=0.75,      # MinHash similarity threshold (0.0-1.0)
+    pichash_size=8,               # PicHash size in bytes
+    band_matches_required=5       # Minimum band matches for candidates
+)
+```
+
+### MinHash Threshold
+
+- **0.5-0.6**: Very loose matching (catch variants)
+- **0.7**: Default (balanced)
+- **0.8-0.9**: Strict matching (near-identical code)
+- **1.0**: Exact matches only
+
+### Band Matches Required
+
+Higher values reduce false positives:
+```python
+band_matches_required=10  # More strict
+band_matches_required=1   # More permissive (default)
+```
+
+## Understanding Results
+
+The MatchingResult object provides:
+
+```python
+from mcrit.storage.MatchingResult import MatchingResult
+
+result = MatchingResult.fromDict(result_dict)
+
+# Get best matches per family
+for family_result in result.getBestSampleMatchesPerFamily(limit=10, malware_only=True):
+    print(f"Family: {family_result.family}")
+    print(f"  Sample ID: {family_result.sample_id}")
+    print(f"  SHA256: {family_result.sha256}")
+    print(f"  Matched functions: {family_result.matched_functions_minhash}")
+    print(f"  Weighted score: {family_result.matched_percent_score_weighted}%")
+    print(f"  Non-lib score: {family_result.matched_percent_nonlib_score_weighted}%")
+```
+
+## Query Workflow
+
+<Steps>
+  <Step title="Job Creation">
+    Client sends binary/report to server, which creates a job (Worker.py:393-411).
+  </Step>
+
+  <Step title="Disassembly (if needed)">
+    SMDA disassembles binary and extracts functions (Worker.py:424-427).
+  </Step>
+
+  <Step title="MinHash Calculation">
+    Worker calculates MinHashes for all functions (Worker.py:550-589).
+  </Step>
+
+  <Step title="Candidate Search">
+    MinHash bands identify candidate matches from the index.
+  </Step>
+
+  <Step title="Similarity Scoring">
+    Each candidate is scored using MinHash and PicHash similarity.
+  </Step>
+
+  <Step title="Result Aggregation">
+    Results are aggregated by sample and family, then returned.
+  </Step>
+</Steps>
+
+## Filtering Results
+
+### Malware Only
+
+Exclude library matches:
+```python
+best_matches = result.getBestSampleMatchesPerFamily(
+    limit=20,
+    malware_only=True
+)
+```
+
+### Minimum Score
+
+Filter by similarity threshold:
+```python
+filtered = result.filterBySampleScore(
+    min_score=0.8,
+    use_non_library_score=True
+)
+```
+
+### By Family
+
+Get matches for specific family:
+```python
+if "win.wannacry" in result.matches["families"]:
+    wannacry_matches = result.matches["families"]["win.wannacry"]
+```
+
+## Monitoring Job Progress
+
+```python
+import time
+
+job_id = client.requestMatchesForUnmappedBinary(binary)
+
+while True:
+    job_status = client.getJobData(job_id)
+    if job_status.state == "finished":
+        result = client.getResultForJob(job_id)
+        break
+    elif job_status.state == "failed":
+        print(f"Job failed: {job_status.result}")
+        break
+    else:
+        print(f"Progress: {job_status.progress}%")
+        time.sleep(2)
+```
+
+## Best Practices
+
+- Use `-f` flag when database has been recently updated
+- Save results with `-o` for offline analysis
+- Adjust `minhash_threshold` based on use case (malware triage vs. code forensics)
+- Query SMDA reports when possible to avoid redundant disassembly
+- Monitor job queue during high-volume querying
+- Use compact results for large-scale analysis to reduce memory

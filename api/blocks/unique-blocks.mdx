@@ -1,0 +1,275 @@
+---
+title: 'Unique Blocks'
+description: 'Analyze and retrieve unique code blocks for samples or families'
+---
+
+## GET /uniqueblocks/samples/{comma_separated_sample_ids}
+
+Analyze a set of samples to identify unique code blocks that distinguish them from other samples in the database.
+
+### Path Parameters
+
+<ParamField path="comma_separated_sample_ids" type="string" required>
+  Comma-separated list of sample IDs to analyze (e.g., `"1,2,3,4,5"`). Must contain only integers separated by commas with optional whitespace.
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request. Returns `"successful"` on success.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Unique blocks analysis result
+  
+  <Expandable title="UniqueBlocksResult Object">
+    <ResponseField name="statistics" type="object">
+      Statistics about the analysis
+      
+      <Expandable title="Statistics Properties">
+        <ResponseField name="num_samples" type="integer">
+          Total number of samples analyzed
+        </ResponseField>
+        
+        <ResponseField name="by_sample_id" type="object">
+          Statistics broken down by sample ID, including block counts and coverage
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="unique_blocks" type="object">
+      Dictionary of unique blocks keyed by PIC block hash (Position Independent Code hash)
+      
+      <Expandable title="Block Properties">
+        <ResponseField name="length" type="integer">
+          Number of instructions in the block
+        </ResponseField>
+        
+        <ResponseField name="escaped_sequence" type="string">
+          Hexadecimal byte sequence representing the block (suitable for YARA rules)
+        </ResponseField>
+        
+        <ResponseField name="instructions" type="array">
+          Array of disassembled instructions in the block
+          
+          <Expandable title="Instruction Format">
+            Each instruction is an array: `[offset, bytes, mnemonic, operands]`
+            
+            <ResponseField name="[0]" type="integer">
+              Instruction offset
+            </ResponseField>
+            
+            <ResponseField name="[1]" type="string">
+              Hexadecimal bytes of the instruction
+            </ResponseField>
+            
+            <ResponseField name="[2]" type="string">
+              Instruction mnemonic (e.g., "push", "mov", "call")
+            </ResponseField>
+            
+            <ResponseField name="[3]" type="string">
+              Instruction operands
+            </ResponseField>
+          </Expandable>
+        </ResponseField>
+        
+        <ResponseField name="samples" type="array">
+          Array of sample IDs that contain this unique block
+        </ResponseField>
+        
+        <ResponseField name="score" type="number">
+          Uniqueness score indicating how distinctive this block is
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="yara_rule" type="array">
+      Generated YARA rule strings based on the unique blocks (if applicable)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Use Cases
+
+Unique blocks analysis is valuable for:
+
+- **Malware Clustering**: Identify distinctive code patterns shared by related samples
+- **YARA Rule Generation**: Automatically create detection rules based on unique code blocks
+- **Code Attribution**: Find code blocks unique to specific malware families or authors
+- **Variant Analysis**: Understand what makes malware variants different from each other
+
+### Example Request
+
+```bash
+curl -X GET "https://your-mcrit-instance.com/uniqueblocks/samples/1,2,3" \
+  -H "apitoken: your-api-token"
+```
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "statistics": {
+      "num_samples": 3,
+      "by_sample_id": {
+        "1": {
+          "num_blocks": 245,
+          "coverage": 0.87
+        },
+        "2": {
+          "num_blocks": 238,
+          "coverage": 0.85
+        },
+        "3": {
+          "num_blocks": 251,
+          "coverage": 0.89
+        }
+      }
+    },
+    "unique_blocks": {
+      "a1b2c3d4e5f6": {
+        "length": 8,
+        "escaped_sequence": "55 8B EC 83 EC 10 56 57",
+        "instructions": [
+          [4194304, "55", "push", "ebp"],
+          [4194305, "8BEC", "mov", "ebp, esp"],
+          [4194307, "83EC10", "sub", "esp, 0x10"],
+          [4194310, "56", "push", "esi"],
+          [4194311, "57", "push", "edi"]
+        ],
+        "samples": [1, 2, 3],
+        "score": 0.95
+      }
+    },
+    "yara_rule": []
+  }
+}
+```
+
+## GET /uniqueblocks/family/{family_id}
+
+Analyze all samples in a malware family to identify unique code blocks that characterize the family.
+
+### Path Parameters
+
+<ParamField path="family_id" type="integer" required>
+  Family ID to analyze
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of the request. Returns `"successful"` on success.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Unique blocks analysis result - structure identical to the samples endpoint above
+</ResponseField>
+
+### How It Works
+
+This endpoint:
+
+1. Retrieves all samples belonging to the specified family
+2. Extracts sample IDs from the family members
+3. Performs unique blocks analysis on the entire family
+4. Returns blocks that are distinctive to this family compared to the rest of the database
+
+### Example Request
+
+```bash
+curl -X GET "https://your-mcrit-instance.com/uniqueblocks/family/2" \
+  -H "apitoken: your-api-token"
+```
+
+### Example Response
+
+```json
+{
+  "status": "successful",
+  "data": {
+    "statistics": {
+      "num_samples": 15,
+      "by_sample_id": {
+        "1": {"num_blocks": 245, "coverage": 0.87},
+        "4": {"num_blocks": 238, "coverage": 0.85},
+        "7": {"num_blocks": 251, "coverage": 0.89}
+      }
+    },
+    "unique_blocks": {
+      "f6e5d4c3b2a1": {
+        "length": 12,
+        "escaped_sequence": "8B 45 08 8B 4D 0C 03 C1 5D C3",
+        "instructions": [
+          [4198400, "8B4508", "mov", "eax, [ebp+0x8]"],
+          [4198403, "8B4D0C", "mov", "ecx, [ebp+0xc]"],
+          [4198406, "03C1", "add", "eax, ecx"],
+          [4198408, "5D", "pop", "ebp"],
+          [4198409, "C3", "ret", ""]
+        ],
+        "samples": [1, 4, 7, 9, 11, 13, 15],
+        "score": 0.92
+      }
+    },
+    "yara_rule": []
+  }
+}
+```
+
+## YARA Rule Generation
+
+The unique blocks result can be used to generate YARA rules programmatically. The `UniqueBlocksResult` object includes methods for:
+
+- **Block Cover Generation**: Select optimal blocks to maximize sample coverage
+- **Rule Rendering**: Generate YARA rules with configurable parameters
+
+### Generation Parameters
+
+YARA rules can be generated with the following constraints:
+
+<ParamField query="min_ins" type="integer">
+  Minimum number of instructions per block
+</ParamField>
+
+<ParamField query="max_ins" type="integer">
+  Maximum number of instructions per block
+</ParamField>
+
+<ParamField query="min_bytes" type="integer">
+  Minimum byte length for blocks
+</ParamField>
+
+<ParamField query="max_bytes" type="integer">
+  Maximum byte length for blocks
+</ParamField>
+
+<ParamField query="required_per_sample" type="integer" default="10">
+  Number of blocks required to match per sample for complete coverage
+</ParamField>
+
+<ParamField query="condition_required" type="integer" default="7">
+  Number of blocks that must match in the YARA rule condition
+</ParamField>
+
+### Example YARA Rule Output
+
+```yara
+rule mcrit_a1b2c3d4e5f6a7b8 {
+    meta:
+        author = "MCRIT YARA Generator"
+        description = "Code-based YARA rule composed from potentially unique basic blocks for the selected set of samples/family."
+        date = "2023-01-12"
+    strings:
+        // Rule generation selected 15 picblocks, covering 15/15 input sample(s).
+        /* picblockhash: a1b2c3d4e5f6 - coverage: 15/15 samples.
+         * 55       | push ebp
+         * 8BEC     | mov ebp, esp
+         * 83EC10   | sub esp, 0x10
+         */
+        $blockhash_a1b2c3d4e5f6 = { 55 8B EC 83 EC 10 }
+    condition:
+        7 of them
+}
+```

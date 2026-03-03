@@ -1,0 +1,491 @@
+---
+title: Storage Backend Development
+description: Create custom storage backends for MCRIT to support different database systems and persistence strategies
+---
+
+MCRIT's storage layer is designed to be pluggable, allowing you to implement custom backends for different database systems. This guide covers implementing the StorageInterface for your own storage solution.
+
+## Architecture Overview
+
+MCRIT uses a factory pattern for storage backends:
+
+```
+StorageFactory → StorageInterface ← MongoDbStorage
+                                  ← MemoryStorage  
+                                  ← YourCustomStorage
+```
+
+## The StorageInterface
+
+All storage backends must implement `mcrit/storage/StorageInterface.py`. This interface defines ~60 methods for managing:
+
+- **Samples**: Binary files and their metadata
+- **Functions**: Individual functions within samples
+- **Families**: Malware/software family classifications
+- **MinHashes**: Function similarity hashes
+- **PicHashes**: Position-independent code hashes
+- **Bands**: MinHash band indexing for LSH
+- **Matching**: Candidate retrieval and caching
+
+### Core Interface Structure
+
+```python
+from typing import Dict, List, Optional, Set, Tuple
+from mcrit.storage.SampleEntry import SampleEntry
+from mcrit.storage.FunctionEntry import FunctionEntry
+from mcrit.minhash.MinHash import MinHash
+
+class StorageInterface:
+    def __init__(self, config: "McritConfig") -> None:
+        """Initialize storage with configuration.
+        
+        Args:
+            config: McritConfig containing storage, minhash, and shingler configs
+        """
+        self._config = config
+        self._storage_config = config.STORAGE_CONFIG
+        self._minhash_config = config.MINHASH_CONFIG
+        self._band_projection = None
+```
+
+## Essential Methods to Implement
+
+### 1. Initialization and Cleanup
+
+```python
+def clearStorage(self) -> None:
+    """Delete all contents, reinitialize empty storage, 
+    ensure indexing and add Family '' with family_id 0."""
+    raise NotImplementedError
+
+def dbLogEvent(self, event_msg: str, username: Optional[str] = None, 
+               details: Optional[dict] = None) -> None:
+    """Log an event to the database"""
+    raise NotImplementedError
+```
+
+### 2. Sample Management
+
+```python
+from smda.common.SmdaReport import SmdaReport
+
+def addSmdaReport(self, smda_report: SmdaReport, 
+                  isQuery=False) -> Optional[SampleEntry]:
+    """Add a SMDA report to storage.
+    
+    Returns:
+        SampleEntry if successful, None if SHA256 already exists
+    """
+    raise NotImplementedError
+
+def getSampleBySha256(self, sha256: str, 
+                      is_query=False) -> Optional[SampleEntry]:
+    """Check if SHA256 is already associated with a sample"""
+    raise NotImplementedError
+
+def getSampleById(self, sample_id: int) -> Optional[SampleEntry]:
+    """Get sample by ID"""
+    raise NotImplementedError
+
+def deleteSample(self, sample_id: int) -> bool:
+    """Remove sample and all its functions. Remove all MinHashes from bands."""
+    raise NotImplementedError
+```
+
+### 3. Function Management
+
+```python
+def getFunctionById(self, function_id: int, 
+                    with_xcfg=False) -> Optional[FunctionEntry]:
+    """Get function by ID, optionally include XCFG data"""
+    raise NotImplementedError
+
+def getFunctionsBySampleId(self, sample_id: int) -> Optional[List[FunctionEntry]]:
+    """Get all functions for a sample"""
+    raise NotImplementedError
+
+def isFunctionId(self, function_id: int) -> bool:
+    """Check if function exists"""
+    raise NotImplementedError
+```
+
+### 4. Family Management
+
+```python
+def addFamily(self, family_name: str) -> int:
+    """Add family if not known, return family_id"""
+    raise NotImplementedError
+
+def getFamilyId(self, family_name: str) -> Optional[int]:
+    """Get family_id by name"""
+    raise NotImplementedError
+
+def getFamily(self, family_id: int) -> Optional[str]:
+    """Get family name by ID"""
+    raise NotImplementedError
+
+def deleteFamily(self, family_id: int, 
+                 keep_samples: Optional[str] = False) -> bool:
+    """Delete family, optionally reassign samples to family 0"""
+    raise NotImplementedError
+```
+
+### 5. MinHash and Band Management
+
+```python
+def addMinHash(self, minhash: MinHash) -> bool:
+    """Add MinHash to function and update band indices"""
+    raise NotImplementedError
+
+def addMinHashes(self, minhashes: List[MinHash]) -> None:
+    """Batch add MinHashes"""
+    raise NotImplementedError
+
+def getMinHashByFunctionId(self, function_id: int) -> Optional[bytes]:
+    """Get MinHash bytes for a function"""
+    raise NotImplementedError
+
+def rebuildMinhashBandIndex(self) -> int:
+    """Rebuild band index from scratch, return count"""
+    raise NotImplementedError
+```
+
+### 6. Candidate Retrieval (Critical for Performance)
+
+```python
+def getCandidatesForMinHash(self, minhash: MinHash, 
+                            band_matches_required=1) -> Set[int]:
+    """Get candidate function_ids from matching bands.
+    
+    This is the core LSH lookup - critical for query performance.
+    """
+    raise NotImplementedError
+
+def getCandidatesForMinHashes(self, function_id_to_minhash: Dict[int, MinHash],
+                              band_matches_required=1) -> Dict[int, Set[int]]:
+    """Batch candidate retrieval"""
+    raise NotImplementedError
+```
+
+### 7. Band Hash Calculation
+
+```python
+def createBandhashProjection(self, minhash):
+    """Calculate projection for index permutation based on minhash.
+    
+    Returns:
+        Dict mapping band_id to list of signature indices
+    """
+    band_projection = {}
+    banding_strategy = getattr(self._storage_config, 
+                               "STORAGE_BAND_STRATEGY", "random")
+    
+    if banding_strategy == "random":
+        import random
+        random.seed(self._storage_config.STORAGE_BAND_SEED)
+        band_index = 0
+        for band_size, num_bands in self._storage_config.STORAGE_BANDS.items():
+            for _ in range(num_bands):
+                index_sequence = [i for i in range(len(minhash.getMinHashInt()))]
+                random.shuffle(index_sequence)
+                band_projection[band_index] = index_sequence[:band_size]
+                band_index += 1
+    
+    elif banding_strategy == "linear":
+        # Linear banding for more predictable behavior
+        band_index = 0
+        size_num_tuples = list(self._storage_config.STORAGE_BANDS.items())[0]
+        band_size = size_num_tuples[0]
+        num_bands = size_num_tuples[1]
+        
+        for _ in range(num_bands):
+            index_sequence = []
+            step_size = int(self._minhash_config.MINHASH_SIGNATURE_LENGTH / band_size)
+            for index_num in range(band_size):
+                index_sequence.append(index_num * step_size + band_index)
+            band_projection[band_index] = index_sequence
+            band_index += 1
+    
+    return band_projection
+
+def getBandHashesForMinHash(self, minhash: MinHash) -> Dict[int, int]:
+    """Calculate band hashes for a MinHash.
+    
+    Returns:
+        Dict mapping band_id to band_hash
+    """
+    if self._band_projection is None:
+        self._band_projection = self.createBandhashProjection(minhash)
+    
+    band_hashes = {}
+    minhash_data = minhash.getMinHashInt()
+    
+    for band_index, permutation in self._band_projection.items():
+        band_data = [minhash_data[i] for i in permutation]
+        hashed_band_data = MinHash.hashData(band_data, 0)
+        band_hashes[band_index] = hashed_band_data
+    
+    return band_hashes
+```
+
+### 8. PicHash Matching
+
+```python
+def getPicHashMatchesByFunctionId(self, function_id: int) -> Optional[Dict[int, Set[Tuple[int, int]]]]:
+    """Get PicHash and all sample_id/function_id pairs with same hash"""
+    raise NotImplementedError
+
+def getMatchesForPicHash(self, pichash: int) -> Set[Tuple[int, int, int]]:
+    """Get (family_id, sample_id, function_id) tuples for a PicHash"""
+    raise NotImplementedError
+```
+
+## Example Implementation: MemoryStorage
+
+Here's a simplified example showing key patterns:
+
+```python
+from collections import defaultdict
+from typing import Dict, List, Set
+from mcrit.storage.StorageInterface import StorageInterface
+
+class MemoryStorage(StorageInterface):
+    def __init__(self, config):
+        super().__init__(config)
+        self._samples = {}  # sample_id -> SampleEntry
+        self._functions = {}  # function_id -> FunctionEntry
+        self._families = {}  # family_id -> family_name
+        self._family_name_to_id = {}  # family_name -> family_id
+        self._bands = defaultdict(lambda: defaultdict(set))  # band_id -> band_hash -> set(function_ids)
+        self._pichash_index = defaultdict(set)  # pichash -> set((family_id, sample_id, function_id))
+        
+        # Initialize family 0
+        self.addFamily("")
+    
+    def addFamily(self, family_name: str) -> int:
+        if family_name in self._family_name_to_id:
+            return self._family_name_to_id[family_name]
+        
+        family_id = len(self._families)
+        self._families[family_id] = family_name
+        self._family_name_to_id[family_name] = family_id
+        return family_id
+    
+    def addMinHash(self, minhash: MinHash) -> bool:
+        function_id = minhash.function_id
+        if function_id not in self._functions:
+            return False
+        
+        # Update function entry
+        self._functions[function_id].minhash = minhash.getMinHash()
+        
+        # Update band indices
+        band_hashes = self.getBandHashesForMinHash(minhash)
+        for band_id, band_hash in band_hashes.items():
+            self._bands[band_id][band_hash].add(function_id)
+        
+        return True
+    
+    def getCandidatesForMinHash(self, minhash: MinHash, 
+                                band_matches_required=1) -> Set[int]:
+        band_hashes = self.getBandHashesForMinHash(minhash)
+        candidate_counts = defaultdict(int)
+        
+        # Count how many bands each function matches
+        for band_id, band_hash in band_hashes.items():
+            if band_hash in self._bands[band_id]:
+                for function_id in self._bands[band_id][band_hash]:
+                    candidate_counts[function_id] += 1
+        
+        # Return functions matching enough bands
+        candidates = set()
+        for function_id, count in candidate_counts.items():
+            if count >= band_matches_required:
+                candidates.add(function_id)
+        
+        return candidates
+```
+
+## MongoDB Implementation Notes
+
+The production `MongoDbStorage` demonstrates advanced patterns:
+
+### Collection Structure
+
+```python
+class MongoDbStorage(StorageInterface):
+    def __init__(self, config):
+        super().__init__(config)
+        
+        # Connect to MongoDB
+        connection_string = self._buildConnectionString()
+        self._mongo_client = MongoClient(connection_string)
+        self._db = self._mongo_client[self._storage_config.STORAGE_MONGODB_DBNAME]
+        
+        # Collections
+        self._collection_samples = self._db["samples"]
+        self._collection_functions = self._db["functions"]
+        self._collection_families = self._db["families"]
+        self._collection_bands = self._db["bands"]
+        self._collection_pichashes = self._db["pichashes"]
+        
+        # Ensure indices
+        self._ensureIndexing()
+```
+
+### Indexing Strategy
+
+```python
+def _ensureIndexing(self):
+    """Create database indices for performance"""
+    # Sample indices
+    self._collection_samples.create_index("sample_id", unique=True)
+    self._collection_samples.create_index("sha256", unique=True)
+    self._collection_samples.create_index("family_id")
+    
+    # Function indices
+    self._collection_functions.create_index("function_id", unique=True)
+    self._collection_functions.create_index("sample_id")
+    self._collection_functions.create_index("pichash")
+    
+    # Band indices for LSH
+    self._collection_bands.create_index([("band_id", 1), ("band_hash", 1)])
+```
+
+### Batch Operations
+
+```python
+def addMinHashes(self, minhashes: List[MinHash]) -> None:
+    """Efficient batch MinHash insertion"""
+    from pymongo import UpdateOne
+    
+    function_updates = []
+    band_inserts = []
+    
+    for minhash in minhashes:
+        if minhash.function_id not in self._functions:
+            continue
+        
+        # Update function
+        function_updates.append(
+            UpdateOne(
+                {"function_id": minhash.function_id},
+                {"$set": {"minhash": minhash.getMinHash()}}
+            )
+        )
+        
+        # Prepare band updates
+        band_hashes = self.getBandHashesForMinHash(minhash)
+        for band_id, band_hash in band_hashes.items():
+            band_inserts.append({
+                "band_id": band_id,
+                "band_hash": band_hash,
+                "function_id": minhash.function_id
+            })
+    
+    # Execute batch operations
+    if function_updates:
+        self._collection_functions.bulk_write(function_updates)
+    if band_inserts:
+        self._collection_bands.insert_many(band_inserts)
+```
+
+## Registering Your Storage Backend
+
+Add your storage to `mcrit/storage/StorageFactory.py`:
+
+```python
+from mcrit.storage.MyCustomStorage import MyCustomStorage
+
+class StorageFactory:
+    STORAGE_METHOD_MEMORY = "memory"
+    STORAGE_METHOD_MONGODB = "mongodb"
+    STORAGE_METHOD_CUSTOM = "custom"  # Add your method
+
+    @staticmethod
+    def getStorage(mcrit_config):
+        method = mcrit_config.STORAGE_CONFIG.STORAGE_METHOD
+        
+        if method == StorageFactory.STORAGE_METHOD_MONGODB:
+            return MongoDbStorage(mcrit_config)
+        elif method == StorageFactory.STORAGE_METHOD_CUSTOM:
+            return MyCustomStorage(mcrit_config)  # Your implementation
+        
+        return MemoryStorage(mcrit_config)
+```
+
+Configure in `mcrit/config/StorageConfig.py`:
+
+```python
+@dataclass
+class StorageConfig(ConfigInterface):
+    STORAGE_METHOD: str = "custom"  # Use your backend
+    STORAGE_SERVER: str = "127.0.0.1"
+    STORAGE_PORT: str = "5432"  # Your DB port
+    # Add custom config fields
+    STORAGE_CUSTOM_PARAM: str = "value"
+```
+
+## Testing Your Storage Backend
+
+```python
+import pytest
+from mcrit.config.McritConfig import McritConfig
+from mcrit.storage.MyCustomStorage import MyCustomStorage
+
+def test_storage_initialization():
+    config = McritConfig()
+    storage = MyCustomStorage(config)
+    assert storage is not None
+
+def test_family_operations():
+    storage = MyCustomStorage(McritConfig())
+    
+    # Family 0 should exist
+    assert storage.getFamily(0) == ""
+    
+    # Add family
+    family_id = storage.addFamily("test_family")
+    assert family_id == 1
+    
+    # Retrieve family
+    assert storage.getFamily(family_id) == "test_family"
+
+def test_sample_operations():
+    storage = MyCustomStorage(McritConfig())
+    # Test addSmdaReport, getSampleById, etc.
+```
+
+## Performance Optimization
+
+### 1. Index Critical Lookups
+
+- Sample SHA256
+- Function IDs
+- Band (band_id, band_hash) pairs
+- PicHash values
+
+### 2. Batch Operations
+
+Implement bulk insert/update for:
+- MinHash addition
+- Band index updates
+- Function imports
+
+### 3. Caching
+
+Consider caching:
+- Band projection calculations
+- Frequently accessed samples/functions
+- Family mappings
+
+### 4. Connection Pooling
+
+For database backends, use connection pooling to reduce overhead.
+
+## See Also
+
+- [Architecture Details](/development/architecture-details) - System architecture
+- [Contributing](/development/contributing) - Code contribution guidelines
+- Source: `mcrit/storage/StorageInterface.py`
+- Examples: `mcrit/storage/MongoDbStorage.py`, `mcrit/storage/MemoryStorage.py`
